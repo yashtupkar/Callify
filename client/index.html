@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Realtime Voice Agent Testing</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 2rem; }
+        .controls { margin-bottom: 2rem; display: flex; gap: 1rem; }
+        button { padding: 0.75rem 1.5rem; font-size: 1rem; cursor: pointer; border-radius: 4px; border: none; background: #007bff; color: white; }
+        button:disabled { background: #ccc; cursor: not-allowed; }
+        #stopBtn { background: #dc3545; }
+        .log-container { background: #f8f9fa; padding: 1rem; border-radius: 4px; height: 400px; overflow-y: auto; border: 1px solid #dee2e6; }
+        .log-entry { margin-bottom: 0.5rem; }
+        .speaker-user { color: #0056b3; font-weight: bold; }
+        .speaker-agent { color: #28a745; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <h1>Realtime AI Voice Agent</h1>
+    
+    <div class="controls">
+        <button id="startBtn">Start Call</button>
+        <button id="stopBtn" disabled>End Call</button>
+    </div>
+
+    <div class="log-container" id="transcriptLog">
+        <div style="color: #6c757d">Click "Start Call" to begin...</div>
+    </div>
+
+    <script src="client.js"></script>
+</body>
+</html>
