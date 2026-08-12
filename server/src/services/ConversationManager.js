@@ -3,6 +3,7 @@ const { STTService } = require('../integrations/stt/sttService');
 const { LLMService } = require('../integrations/llm/llmService');
 const { TTSProvider } = require('../integrations/tts/ttsProvider');
 const { FishAudioTTSProvider } = require('../integrations/tts/fishAudioTtsProvider');
+const { dentalTools, executeDentalTool } = require('../integrations/llm/dentalTools');
 
 class ConversationManager extends EventEmitter {
   constructor(ws) {
@@ -22,10 +23,9 @@ class ConversationManager extends EventEmitter {
     this.isCallActive = false;
     this.transcript = [];
 
-    // Turn detection variables
     this.userSpeechBuffer = "";
     this.silenceTimeout = null;
-    this.TURN_TIMEOUT_MS = 1500; // Wait 1.5 seconds of silence before responding
+    this.TURN_TIMEOUT_MS = 700; // Wait 0.7 seconds of silence before responding
     
     this.setupListeners();
   }
@@ -68,9 +68,12 @@ class ConversationManager extends EventEmitter {
         clearTimeout(this.silenceTimeout);
       }
       
-      // Barge-in logic: User started speaking, interrupt TTS if it's playing
-      // Temporarily disabled to prevent speaker echo from accidentally interrupting the AI!
-      // this.tts.interrupt();
+      console.log('[ConversationManager] User started speaking. Interrupting agent.');
+      this.tts.interrupt();
+      if (this.llm.abort) {
+        this.llm.abort();
+      }
+      this.sendToClient({ event: 'clear_audio' });
     });
 
     this.stt.on('error', (err) => {
@@ -88,10 +91,34 @@ class ConversationManager extends EventEmitter {
       this.tts.flush(); // Flush the TTS stream since the utterance is complete
     });
 
+    this.llm.on('llm_error', (err) => {
+      console.error('[ConversationManager] LLM Error:', err);
+    });
+
     this.llm.on('tool_call', (toolName, args) => {
       console.log(`[ConversationManager] Tool called: ${toolName}`, args);
-      // Execute tool and feed result back to LLM
-      // this.llm.submitToolResult(toolName, result);
+      const result = executeDentalTool(toolName, args);
+      
+      // Add tool message to transcript
+      this.transcript.push({
+        role: 'assistant',
+        content: null,
+        tool_calls: [{
+          id: "call_" + Math.random().toString(36).substring(7),
+          type: "function",
+          function: { name: toolName, arguments: JSON.stringify(args) }
+        }]
+      });
+      
+      this.transcript.push({
+        role: 'tool',
+        tool_call_id: this.transcript[this.transcript.length - 1].tool_calls[0].id,
+        name: toolName,
+        content: JSON.stringify(result)
+      });
+      
+      // Generate response after tool execution
+      this.llm.generateResponse(this.transcript, dentalTools);
     });
 
     // TTS Events
@@ -106,7 +133,7 @@ class ConversationManager extends EventEmitter {
     console.log('[ConversationManager] Starting conversation with config:', config);
     this.isCallActive = true;
     
-    const systemPrompt = config.systemPrompt || "You are a friendly AI.";
+    const systemPrompt = config.systemPrompt || "You are a friendly and professional dental clinic receptionist. You can help users check availability and book dental appointments. Always use the provided tools to check availability and book appointments when requested. Keep your answers brief and natural.";
     this.llm.initialize(systemPrompt);
     await this.stt.connect();
     
@@ -126,7 +153,7 @@ class ConversationManager extends EventEmitter {
 
   handleUserUtterance(text) {
     this.transcript.push({ role: 'user', content: text });
-    this.llm.generateResponse(this.transcript);
+    this.llm.generateResponse(this.transcript, dentalTools);
   }
 
   endConversation() {

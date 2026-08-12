@@ -15,7 +15,7 @@ class STTService extends EventEmitter {
         console.log('[STTService] Connecting to Deepgram WebSocket...');
         
         const apiKey = process.env.DEEPGRAM_API_KEY;
-        const url = 'wss://api.deepgram.com/v1/listen?model=nova-2&smart_format=true&interim_results=true&endpointing=300';
+        const url = 'wss://api.deepgram.com/v1/listen?model=nova-2&smart_format=true&interim_results=true&endpointing=300&vad_events=true';
         
         this.ws = new WebSocket(url, {
           headers: {
@@ -45,7 +45,7 @@ class STTService extends EventEmitter {
               
               if (transcript) {
                 // Only interrupt if the user has actually started speaking words (ignore background noise)
-                if (!isFinal && !speechFinal && transcript.trim().length > 3) {
+                if (!isFinal && !speechFinal && transcript.trim().length > 8) {
                   this.emit('speech_start');
                 }
                 

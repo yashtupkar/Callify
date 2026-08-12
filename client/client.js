@@ -3,6 +3,7 @@ let mediaRecorder = null;
 let audioContext = null;
 let audioQueue = [];
 let isPlaying = false;
+let activeSources = [];
 
 const startBtn = document.getElementById('startBtn');
 const stopBtn = document.getElementById('stopBtn');
@@ -41,11 +42,13 @@ startBtn.addEventListener('click', async () => {
         // Tell the server to start the conversation
         ws.send(JSON.stringify({ 
             event: 'start', 
-            config: { systemPrompt: "You are a friendly and professional AI receptionist. Keep your answers brief and natural." }
+            config: { systemPrompt: "You are a friendly and professional dental clinic receptionist. You can help users check availability and book dental appointments. Always use the provided tools to check availability and book appointments when requested. Keep your answers brief and natural." }
         }));
 
         // Request microphone access
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const stream = await navigator.mediaDevices.getUserMedia({ 
+            audio: { echoCancellation: true, noiseSuppression: true } 
+        });
         
         // We use MediaRecorder to capture audio chunks and send to WS
         // Note: Deepgram linear16 expects raw PCM. 
@@ -71,7 +74,15 @@ startBtn.addEventListener('click', async () => {
         if (typeof event.data === 'string') {
             try {
                 const msg = JSON.parse(event.data);
-                if (msg.event === 'transcript' && msg.data.isFinal) {
+                if (msg.event === 'clear_audio') {
+                    // Stop playback immediately
+                    audioQueue = [];
+                    nextPlayTime = 0;
+                    activeSources.forEach(source => {
+                        try { source.stop(); } catch(e) {}
+                    });
+                    activeSources = [];
+                } else if (msg.event === 'transcript' && msg.data.isFinal) {
                     appendLog(msg.data.speaker, msg.data.text);
                 } else if (msg.event === 'audio') {
                     // Base64 encoded raw PCM from ElevenLabs (16kHz 16-bit)
@@ -123,6 +134,11 @@ function playNextAudio() {
     const source = audioContext.createBufferSource();
     source.buffer = buffer;
     source.connect(audioContext.destination);
+    
+    activeSources.push(source);
+    source.onended = () => {
+        activeSources = activeSources.filter(s => s !== source);
+    };
     
     source.start(nextPlayTime);
     nextPlayTime += buffer.duration;
