@@ -3,46 +3,64 @@ const { ConversationManager } = require('../services/ConversationManager');
 function setupConnectionHandler(ws, req) {
   console.log('[ConnectionHandler] Initializing new session...');
   
-  // We instantiate a new ConversationManager for every WebSocket connection
+  // Extract agentId and protocol from URL if available
+  let agentId = null;
+  let protocol = 'web';
+  try {
+    const url = new URL(req.url, `ws://${req.headers.host}`);
+    agentId = url.searchParams.get('agentId');
+    protocol = url.searchParams.get('protocol') || 'web';
+  } catch(e) {}
+
   const conversationManager = new ConversationManager(ws);
+
+  // If connected via Twilio or SignalWire, automatically start the conversation
+  if (protocol === 'twilio' || protocol === 'signalwire') {
+    conversationManager.startConversation({ agentId }, protocol);
+  }
 
   ws.on('message', async (message) => {
     try {
-      // We expect the client to send JSON messages for control, 
-      // or raw binary for audio depending on the protocol chosen.
-      // For simplicity, let's assume the frontend sends JSON:
-      // { event: 'start', config: {...} } or { event: 'audio', data: base64_audio }
-      
       let msg;
+      if (Buffer.isBuffer(message) && protocol === 'web') {
+        conversationManager.handleIncomingAudio(message);
+        return;
+      }
+      
       try {
         msg = JSON.parse(message.toString());
-      } catch(e) {
-        // If not JSON, it might be raw binary audio from browser MediaRecorder
-        if (Buffer.isBuffer(message)) {
-          conversationManager.handleIncomingAudio(message);
-          return;
+      } catch(e) {}
+
+      if (msg) {
+        if (protocol === 'twilio' || protocol === 'signalwire') {
+          // Twilio/SignalWire Media Streams format
+          if (msg.event === 'media') {
+            const payload = msg.media.payload; // Base64 encoded mu-law
+            const buffer = Buffer.from(payload, 'base64');
+            // Assuming STT handles mu-law when configured, just pass it
+            conversationManager.handleIncomingAudio(buffer);
+          } else if (msg.event === 'start') {
+            console.log(`[ConnectionHandler] ${protocol} Stream started`, msg.streamSid);
+            conversationManager.twilioStreamSid = msg.streamSid; // Save for sending audio back
+          }
+        } else {
+          // Web Client format
+          switch (msg.event) {
+            case 'start':
+              console.log('[ConnectionHandler] Start event received. Config:', msg.config);
+              msg.config.agentId = msg.config.agentId || agentId;
+              await conversationManager.startConversation(msg.config, protocol);
+              break;
+            case 'audio':
+              conversationManager.handleIncomingAudio(Buffer.from(msg.data, 'base64'));
+              break;
+            case 'stop':
+              console.log('[ConnectionHandler] Stop event received.');
+              conversationManager.endConversation();
+              break;
+          }
         }
       }
-
-      if (msg && msg.event) {
-        switch (msg.event) {
-          case 'start':
-            console.log('[ConnectionHandler] Start event received. Config:', msg.config);
-            await conversationManager.startConversation(msg.config);
-            break;
-          case 'audio':
-            // Base64 encoded audio
-            conversationManager.handleIncomingAudio(Buffer.from(msg.data, 'base64'));
-            break;
-          case 'stop':
-            console.log('[ConnectionHandler] Stop event received.');
-            conversationManager.endConversation();
-            break;
-          default:
-            console.warn(`[ConnectionHandler] Unknown event type: ${msg.event}`);
-        }
-      }
-
     } catch (err) {
       console.error('[ConnectionHandler] Error processing message:', err);
     }

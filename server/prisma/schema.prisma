@@ -1,0 +1,31 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Agent {
+  id             String        @id @default(uuid())
+  name           String
+  systemPrompt   String        @db.Text
+  initialMessage String
+  voiceId        String?
+  tools          Json?         // Stores array of tool definitions (name, description, parameters, webhook_url)
+  phoneNumbers   PhoneNumber[]
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+}
+
+model PhoneNumber {
+  id          String   @id @default(uuid())
+  phoneNumber String   @unique // The E.164 phone number
+  agentId     String?
+  agent       Agent?   @relation(fields: [agentId], references: [id])
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}

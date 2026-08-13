@@ -9,9 +9,19 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Serve static frontend testing files from the client folder
 const path = require('path');
 app.use(express.static(path.join(__dirname, '../client')));
+
+const apiRoutes = require('./src/routes/apiRoutes');
+app.use('/api/agents', apiRoutes);
+
+const twilioRoutes = require('./src/routes/twilioRoutes');
+// Twilio sends data as application/x-www-form-urlencoded
+app.use('/api/twilio', express.urlencoded({ extended: true }), twilioRoutes);
+
+const signalwireRoutes = require('./src/routes/signalwireRoutes');
+// SignalWire also sends data as application/x-www-form-urlencoded
+app.use('/api/signalwire', express.urlencoded({ extended: true }), signalwireRoutes);
 
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', service: 'realtime-voice-service' });

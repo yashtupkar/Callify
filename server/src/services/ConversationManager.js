@@ -73,7 +73,11 @@ class ConversationManager extends EventEmitter {
       if (this.llm.abort) {
         this.llm.abort();
       }
-      this.sendToClient({ event: 'clear_audio' });
+      if (this.twilioStreamSid) {
+        this.sendToClient({ event: 'clear', streamSid: this.twilioStreamSid });
+      } else {
+        this.sendToClient({ event: 'clear_audio' });
+      }
     });
 
     this.stt.on('error', (err) => {
@@ -95,9 +99,10 @@ class ConversationManager extends EventEmitter {
       console.error('[ConversationManager] LLM Error:', err);
     });
 
-    this.llm.on('tool_call', (toolName, args) => {
+    this.llm.on('tool_call', async (toolName, args) => {
       console.log(`[ConversationManager] Tool called: ${toolName}`, args);
-      const result = executeDentalTool(toolName, args);
+      const { WebhookService } = require('./WebhookService');
+      const result = await WebhookService.executeTool(toolName, args, this.dynamicTools);
       
       // Add tool message to transcript
       this.transcript.push({
@@ -118,30 +123,62 @@ class ConversationManager extends EventEmitter {
       });
       
       // Generate response after tool execution
-      this.llm.generateResponse(this.transcript, dentalTools);
+      this.llm.generateResponse(this.transcript, this.dynamicTools);
     });
 
     // TTS Events
     this.tts.on('audio', (audioBuffer) => {
       // Send raw audio bytes down to the client WebSocket
-      this.sendToClient({ event: 'audio', data: audioBuffer.toString('base64') });
+      if (this.twilioStreamSid) {
+         this.sendToClient({
+           event: 'media',
+           streamSid: this.twilioStreamSid,
+           media: { payload: audioBuffer.toString('base64') }
+         });
+      } else {
+         this.sendToClient({ event: 'audio', data: audioBuffer.toString('base64') });
+      }
     });
   }
 
-  async startConversation(config) {
+  async startConversation(config, protocol = 'web') {
     this.sendToClient({ event: 'start', config });
-    console.log('[ConversationManager] Starting conversation with config:', config);
+    console.log(`[ConversationManager] Starting conversation (Protocol: ${protocol}) with config:`, config);
     this.isCallActive = true;
     
-    const systemPrompt = config.systemPrompt || "You are a friendly and professional dental clinic receptionist. You can help users check availability and book dental appointments. Always use the provided tools to check availability and book appointments when requested. Keep your answers brief and natural.";
+    // Default configs
+    let systemPrompt = config.systemPrompt || "You are a friendly and professional AI receptionist. Keep your answers brief and natural.";
+    let initialMessage = "Hi, thanks for calling! How can I help you today?";
+    let tools = dentalTools; // Fallback tools
+
+    // If agentId is provided, fetch dynamic config from database
+    if (config.agentId) {
+      try {
+        const prisma = require('../db/prisma');
+        const agent = await prisma.agent.findUnique({
+          where: { id: config.agentId }
+        });
+        if (agent) {
+          systemPrompt = agent.systemPrompt || systemPrompt;
+          initialMessage = agent.initialMessage || initialMessage;
+          if (agent.tools && Array.isArray(agent.tools)) {
+            tools = agent.tools;
+          }
+          console.log(`[ConversationManager] Loaded dynamic config for agent: ${agent.name}`);
+        }
+      } catch (err) {
+        console.error('[ConversationManager] Error loading agent config:', err);
+      }
+    }
+    
+    this.dynamicTools = tools;
     this.llm.initialize(systemPrompt);
     await this.stt.connect();
     
-    // Kick off the conversation with an instant greeting
-    const greeting = "Hi, thanks for calling! You’ve reached our reception desk. How can I help you today?";
-    this.transcript.push({ role: 'assistant', content: greeting });
-    this.sendToClient({ event: 'transcript', data: { text: greeting, isFinal: true, speaker: 'agent' } });
-    this.tts.feedText(greeting);
+    // Kick off the conversation with the dynamic initial message
+    this.transcript.push({ role: 'assistant', content: initialMessage });
+    this.sendToClient({ event: 'transcript', data: { text: initialMessage, isFinal: true, speaker: 'agent' } });
+    this.tts.feedText(initialMessage);
     this.tts.flush();
   }
 
@@ -153,7 +190,7 @@ class ConversationManager extends EventEmitter {
 
   handleUserUtterance(text) {
     this.transcript.push({ role: 'user', content: text });
-    this.llm.generateResponse(this.transcript, dentalTools);
+    this.llm.generateResponse(this.transcript, this.dynamicTools);
   }
 
   endConversation() {
