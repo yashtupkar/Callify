@@ -26,7 +26,7 @@ class ConversationManager extends EventEmitter {
 
     this.userSpeechBuffer = "";
     this.silenceTimeout = null;
-    this.TURN_TIMEOUT_MS = 300; // Wait 0.3 seconds of silence before responding
+    this.TURN_TIMEOUT_MS = 700; // Wait 0.7 seconds of silence before responding to prevent sentence splitting
     
     this.setupListeners();
   }
@@ -107,6 +107,30 @@ class ConversationManager extends EventEmitter {
         return;
       }
       
+      if (toolName === 'save_collected_data') {
+        console.log(`[ConversationManager] Data successfully collected:`, args);
+        
+        this.transcript.push({
+          role: 'assistant',
+          content: null,
+          tool_calls: [{
+            id: "call_" + Math.random().toString(36).substring(7),
+            type: "function",
+            function: { name: toolName, arguments: JSON.stringify(args) }
+          }]
+        });
+        
+        this.transcript.push({
+          role: 'tool',
+          tool_call_id: this.transcript[this.transcript.length - 1].tool_calls[0].id,
+          name: toolName,
+          content: JSON.stringify({ success: true, message: "Data saved successfully. You may now proceed with the user's primary request." })
+        });
+        
+        this.llm.generateResponse(this.transcript, this.getAllTools());
+        return;
+      }
+
       // Check if it's a built-in dental tool
       const isBuiltIn = dentalTools.some(t => t.function.name === toolName);
       
@@ -188,7 +212,30 @@ class ConversationManager extends EventEmitter {
     
     // Inject Data Collection Requirements
     if (config.dataToCollect && config.dataToCollect.length > 0) {
-      fullPrompt += `\n\nDATA COLLECTION MANDATE: Before fulfilling the user's request, calling ANY tools, or ending the call, you MUST ask the user for their: ${config.dataToCollect.join(', ')}. You are strictly forbidden from proceeding or calling tools until this information is fully collected.`;
+      fullPrompt += `\n\nDATA COLLECTION MANDATE: You MUST collect the following fields from the user: ${config.dataToCollect.join(', ')}.
+RULES FOR DATA COLLECTION:
+1. Ask for these fields ONE BY ONE. Do not ask for multiple fields at the same time.
+2. When the user provides a detail (like their name or email), confirm it back to them naturally (e.g., "Got it, yash@gmail.com. Is that correct?"). Do NOT spell it out letter-by-letter.
+3. Only move on to the next field after they confirm it is correct.
+4. Once you have collected and confirmed all the required fields, you MUST call the 'save_collected_data' tool.
+5. You are strictly forbidden from fulfilling their primary request or calling any other custom tools until 'save_collected_data' has been successfully called.`;
+      
+      // Inject the built-in data collection tool
+      this.customTools.push({
+        type: "function",
+        function: {
+          name: "save_collected_data",
+          description: "Save the user's data after collecting and confirming it.",
+          parameters: {
+            type: "object",
+            properties: {
+              name: { type: "string" },
+              email: { type: "string" },
+              phone: { type: "string" }
+            }
+          }
+        }
+      });
     }
 
     this.llm.initialize(fullPrompt);
