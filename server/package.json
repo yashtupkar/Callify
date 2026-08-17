@@ -14,11 +14,17 @@
   "dependencies": {
     "@11labs/client": "^0.2.0",
     "@deepgram/sdk": "^5.7.0",
+    "@prisma/adapter-pg": "^7.9.1",
+    "@prisma/client": "^7.9.1",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "fish-audio": "^0.1.0",
     "openai": "^7.4.0",
+    "pg": "^8.23.0",
     "ws": "^8.21.3"
+  },
+  "devDependencies": {
+    "prisma": "^7.9.1"
   }
 }

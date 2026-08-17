@@ -1,7 +1,9 @@
 const EventEmitter = require('events');
 const WebSocket = require('ws');
+const { ElevenLabsClient } = require('@11labs/client');
+const { TTSProvider } = require('../ProviderInterfaces');
 
-class TTSProvider extends EventEmitter {
+class ElevenLabsTTSProvider extends TTSProvider {
   constructor() {
     super();
     this.ws = null;
@@ -82,9 +84,11 @@ class TTSProvider extends EventEmitter {
     if (ws && ws.readyState === WebSocket.CONNECTING) {
       ws.once('open', () => {
         ws.send(JSON.stringify({ text: token, try_trigger_generation: true }));
+        this.emit('tts_characters', token.length);
       });
     } else if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ text: token, try_trigger_generation: true }));
+      this.emit('tts_characters', token.length);
     }
   }
 
@@ -119,4 +123,4 @@ class TTSProvider extends EventEmitter {
   }
 }
 
-module.exports = { TTSProvider };
+module.exports = { TTSProvider: ElevenLabsTTSProvider };

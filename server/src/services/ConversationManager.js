@@ -4,11 +4,18 @@ const { LLMService } = require('../integrations/llm/llmService');
 const { TTSProvider } = require('../integrations/tts/ttsProvider');
 const { FishAudioTTSProvider } = require('../integrations/tts/fishAudioTtsProvider');
 const { dentalTools, executeDentalTool } = require('../integrations/llm/dentalTools');
+const { UsageTracker } = require('./UsageTracker');
+const { CostCalculator } = require('./CostCalculator');
+const { dbService } = require('./DatabaseService');
 
 class ConversationManager extends EventEmitter {
-  constructor(ws) {
+  constructor(channelAdapter) {
     super();
-    this.ws = ws;
+    this.channel = channelAdapter;
+    
+    // Explicit State Machine
+    this.state = 'CREATED'; // CREATED, CONNECTING, CONNECTED, LISTENING, THINKING, SPEAKING, INTERRUPTED, ENDING, ERROR
+    
     this.stt = new STTService();
     this.llm = new LLMService();
     
@@ -20,7 +27,9 @@ class ConversationManager extends EventEmitter {
       this.tts = new TTSProvider();
     }
     
-    this.isCallActive = false;
+    this.usageTracker = new UsageTracker();
+    this.costCalculator = new CostCalculator();
+    
     this.transcript = [];
     this.customTools = [];
 
@@ -29,6 +38,20 @@ class ConversationManager extends EventEmitter {
     this.TURN_TIMEOUT_MS = 700; // Wait 0.7 seconds of silence before responding to prevent sentence splitting
     
     this.setupListeners();
+    this.setupChannelListeners();
+  }
+
+  setupChannelListeners() {
+    this.channel.on('disconnected', () => {
+      console.log('[ConversationManager] Channel disconnected.');
+      this.endConversation();
+    });
+
+    this.channel.on('error', (err) => {
+      console.error('[ConversationManager] Channel error:', err);
+      this.state = 'ERROR';
+      this.endConversation();
+    });
   }
 
   setupListeners() {
@@ -92,12 +115,17 @@ class ConversationManager extends EventEmitter {
       this.tts.flush(); // Flush the TTS stream since the utterance is complete
     });
 
+    this.llm.on('token_usage', (usageObj) => {
+      this.usageTracker.addLLMTokens(usageObj.prompt_tokens, usageObj.completion_tokens);
+    });
+
     this.llm.on('llm_error', (err) => {
       console.error('[ConversationManager] LLM Error:', err);
     });
 
     this.llm.on('tool_call', (toolName, args) => {
       console.log(`[ConversationManager] Tool called: ${toolName}`, args);
+      this.usageTracker.incrementToolCall();
       
       if (toolName === 'end_call') {
         setTimeout(() => {
@@ -184,6 +212,10 @@ class ConversationManager extends EventEmitter {
     this.tts.on('audio', (audioBuffer) => {
       // Send raw audio bytes down to the client WebSocket
       this.sendToClient({ event: 'audio', data: audioBuffer.toString('base64') });
+    });
+
+    this.tts.on('tts_characters', (count) => {
+      this.usageTracker.addTTSCharacters(count);
     });
   }
 
@@ -298,15 +330,47 @@ RULES FOR DATA COLLECTION:
   }
 
   endConversation() {
+    if (!this.isCallActive && this.state !== 'CONNECTING' && this.state !== 'CONNECTED') return;
+    
     console.log('[ConversationManager] Ending conversation.');
+    this.state = 'ENDING';
     this.isCallActive = false;
     this.stt.disconnect();
     this.tts.interrupt();
+
+    this.usageTracker.addSTTDuration(this.usageTracker.finalize().callDurationSeconds);
+    const usage = this.usageTracker.usage;
+    const cost = this.costCalculator.calculateCost(usage);
+    
+    console.log('[ConversationManager] Final Usage:', usage);
+    console.log('[ConversationManager] Estimated Cost:', cost);
+    
+    this.sendToClient({
+      type: 'usage.updated',
+      usage: usage,
+      cost: cost
+    });
+
+    // Save to database
+    dbService.saveSession({
+      endedAt: new Date(),
+      provider: this.channel.getSessionMetadata ? this.channel.getSessionMetadata().provider : "browser_websocket",
+      sttCost: cost.sttCost,
+      llmCost: cost.llmCost,
+      ttsCost: cost.ttsCost,
+      totalCost: cost.totalCost,
+      sttDurationSeconds: usage.sttDurationSeconds,
+      llmPromptTokens: usage.llmPromptTokens,
+      llmCompletionTokens: usage.llmCompletionTokens,
+      ttsCharacters: usage.ttsCharacters,
+      toolCalls: usage.toolCalls,
+      transcript: this.transcript // Saves full transcript array
+    });
   }
 
   sendToClient(msg) {
-    if (this.ws && this.ws.readyState === 1) { // WebSocket.OPEN
-      this.ws.send(JSON.stringify(msg));
+    if (this.channel) {
+      this.channel.sendControlMessage(msg);
     }
   }
 }

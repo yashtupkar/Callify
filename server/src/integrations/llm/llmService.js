@@ -1,7 +1,8 @@
 const EventEmitter = require('events');
 const { OpenAI } = require('openai');
+const { LLMProvider } = require('../ProviderInterfaces');
 
-class LLMService extends EventEmitter {
+class LLMService extends LLMProvider {
   constructor() {
     super();
     // Use OpenRouter if key is present, otherwise fallback to OpenAI
@@ -27,6 +28,7 @@ class LLMService extends EventEmitter {
 
   async generateResponse(transcript, tools = []) {
     try {
+      this.abort();
       this.abortController = new AbortController();
       
       const messages = [
@@ -41,6 +43,7 @@ class LLMService extends EventEmitter {
         messages: messages,
         temperature: 0.7,
         stream: true,
+        stream_options: { include_usage: true }
       };
       
       if (tools && tools.length > 0) {
@@ -56,7 +59,15 @@ class LLMService extends EventEmitter {
       let toolCallArgs = "";
 
       for await (const chunk of stream) {
-        const delta = chunk.choices[0]?.delta;
+        if (chunk.usage) {
+          this.emit('token_usage', {
+            prompt_tokens: chunk.usage.prompt_tokens,
+            completion_tokens: chunk.usage.completion_tokens,
+            total_tokens: chunk.usage.total_tokens
+          });
+        }
+        
+        const delta = chunk.choices && chunk.choices[0] ? chunk.choices[0].delta : null;
         if (!delta) continue;
         
         const content = delta.content;

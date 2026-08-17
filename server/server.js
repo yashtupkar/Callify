@@ -13,6 +13,9 @@ app.use(express.json());
 const path = require('path');
 app.use(express.static(path.join(__dirname, '../client')));
 
+const agentsRouter = require('./src/routes/agents');
+app.use('/api/agents', agentsRouter);
+
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', service: 'realtime-voice-service' });
 });

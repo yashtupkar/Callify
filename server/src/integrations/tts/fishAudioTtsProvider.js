@@ -1,6 +1,6 @@
-const EventEmitter = require('events');
+const { TTSProvider } = require('../ProviderInterfaces');
 
-class FishAudioTTSProvider extends EventEmitter {
+class FishAudioTTSProvider extends TTSProvider {
   constructor() {
     super();
     this.apiKey = process.env.FISH_API_KEY;
@@ -25,6 +25,7 @@ class FishAudioTTSProvider extends EventEmitter {
     }
     this.textBuffer += token;
     this.isGenerating = true;
+    this.emit('tts_characters', token.length);
 
     // Look for sentence boundaries (punctuation followed by a space or newline)
     const match = this.textBuffer.match(/^(.*?[\.\?\!\n])(?: |\n)(.*)$/s);

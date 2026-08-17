@@ -1,0 +1,51 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Agent {
+  id             String        @id @default(uuid())
+  name           String
+  systemPrompt   String
+  initialMessage String
+  voiceId        String?
+  tools          Json?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  PhoneNumber    PhoneNumber[]
+}
+
+model PhoneNumber {
+  id          String   @id
+  phoneNumber String   @unique
+  agentId     String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime
+  Agent       Agent?   @relation(fields: [agentId], references: [id])
+}
+
+model CallSession {
+  id                  String   @id @default(uuid())
+  createdAt           DateTime @default(now())
+  endedAt             DateTime?
+  provider            String   @default("browser_websocket")
+  
+  // Costs
+  sttCost             Float    @default(0.0)
+  llmCost             Float    @default(0.0)
+  ttsCost             Float    @default(0.0)
+  totalCost           Float    @default(0.0)
+  
+  // Usage tracking
+  sttDurationSeconds  Int      @default(0)
+  llmPromptTokens     Int      @default(0)
+  llmCompletionTokens Int      @default(0)
+  ttsCharacters       Int      @default(0)
+  toolCalls           Int      @default(0)
+  
+  // Full raw transcript payload
+  transcript          Json?
+}

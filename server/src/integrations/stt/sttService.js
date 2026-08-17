@@ -1,7 +1,9 @@
 const EventEmitter = require('events');
 const WebSocket = require('ws');
+const { createClient } = require('@deepgram/sdk');
+const { STTProvider } = require('../ProviderInterfaces');
 
-class STTService extends EventEmitter {
+class STTService extends STTProvider {
   constructor() {
     super();
     this.ws = null;
@@ -53,7 +55,6 @@ class STTService extends EventEmitter {
               const speechFinal = parsed.speech_final;
               
               if (transcript) {
-                // Only interrupt if the user has actually started speaking words (ignore background noise)
                 if (!isFinal && !speechFinal && transcript.trim().length > 8) {
                   this.emit('speech_start');
                 }
