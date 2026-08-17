@@ -25,7 +25,7 @@ class ConversationManager extends EventEmitter {
 
     this.userSpeechBuffer = "";
     this.silenceTimeout = null;
-    this.TURN_TIMEOUT_MS = 700; // Wait 0.7 seconds of silence before responding
+    this.TURN_TIMEOUT_MS = 300; // Wait 0.3 seconds of silence before responding
     
     this.setupListeners();
   }
@@ -97,6 +97,15 @@ class ConversationManager extends EventEmitter {
 
     this.llm.on('tool_call', (toolName, args) => {
       console.log(`[ConversationManager] Tool called: ${toolName}`, args);
+      
+      if (toolName === 'end_call') {
+        setTimeout(() => {
+          this.sendToClient({ event: 'stop' });
+          this.endConversation();
+        }, 5000);
+        return;
+      }
+      
       const result = executeDentalTool(toolName, args);
       
       // Add tool message to transcript
@@ -118,7 +127,14 @@ class ConversationManager extends EventEmitter {
       });
       
       // Generate response after tool execution
-      this.llm.generateResponse(this.transcript, dentalTools);
+      const allTools = [...dentalTools, {
+        type: "function",
+        function: {
+          name: "end_call",
+          description: "Ends the current call. ONLY call this tool AFTER you have explicitly said a polite goodbye."
+        }
+      }];
+      this.llm.generateResponse(this.transcript, allTools);
     });
 
     // TTS Events
@@ -133,9 +149,14 @@ class ConversationManager extends EventEmitter {
     console.log('[ConversationManager] Starting conversation with config:', config);
     this.isCallActive = true;
     
-    const systemPrompt = config.systemPrompt || "You are a friendly and professional dental clinic receptionist. You can help users check availability and book dental appointments. Always use the provided tools to check availability and book appointments when requested. Keep your answers brief and natural.";
-    this.llm.initialize(systemPrompt);
-    await this.stt.connect();
+    const basePrompt = config.systemPrompt || "You are a friendly and professional dental clinic receptionist. You can help users check availability and book dental appointments. Always use the provided tools to check availability and book appointments when requested. Keep your answers brief and natural.";
+    
+    // Inject the current date so the AI has temporal context and doesn't hallucinate dates
+    const currentDateStr = new Date().toLocaleString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', hour: 'numeric', minute: 'numeric' });
+    const fullPrompt = `${basePrompt}\n\nCRITICAL CONTEXT: The current date and time is ${currentDateStr}. If the user provides a time without a date, you MUST ask them for the date. NEVER assume or hallucinate a date.`;
+    
+    this.llm.initialize(fullPrompt);
+    this.stt.connect().catch(e => console.error('[ConversationManager] STT connect error:', e));
     
     // Kick off the conversation with an instant greeting
     const greeting = "Hi, thanks for calling! You’ve reached our reception desk. How can I help you today?";
@@ -153,7 +174,14 @@ class ConversationManager extends EventEmitter {
 
   handleUserUtterance(text) {
     this.transcript.push({ role: 'user', content: text });
-    this.llm.generateResponse(this.transcript, dentalTools);
+    const allTools = [...dentalTools, {
+      type: "function",
+      function: {
+        name: "end_call",
+        description: "Ends the current call. ONLY call this tool AFTER you have explicitly said a polite goodbye."
+      }
+    }];
+    this.llm.generateResponse(this.transcript, allTools);
   }
 
   endConversation() {

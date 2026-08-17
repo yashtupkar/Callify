@@ -7,6 +7,7 @@ class STTService extends EventEmitter {
     this.ws = null;
     this.isConnected = false;
     this.audioBufferQueue = [];
+    this.keepAliveInterval = null;
   }
 
   async connect() {
@@ -15,7 +16,7 @@ class STTService extends EventEmitter {
         console.log('[STTService] Connecting to Deepgram WebSocket...');
         
         const apiKey = process.env.DEEPGRAM_API_KEY;
-        const url = 'wss://api.deepgram.com/v1/listen?model=nova-2&smart_format=true&interim_results=true&endpointing=300&vad_events=true';
+        const url = 'wss://api.deepgram.com/v1/listen?model=nova-2&smart_format=true&interim_results=true&endpointing=200&vad_events=true&keepalive=true';
         
         this.ws = new WebSocket(url, {
           headers: {
@@ -31,6 +32,14 @@ class STTService extends EventEmitter {
             const buffer = this.audioBufferQueue.shift();
             this.ws.send(buffer);
           }
+          
+          // Send KeepAlive every 5 seconds to prevent Deepgram timeout
+          this.keepAliveInterval = setInterval(() => {
+            if (this.isConnected && this.ws.readyState === WebSocket.OPEN) {
+              this.ws.send(JSON.stringify({ type: 'KeepAlive' }));
+            }
+          }, 5000);
+          
           resolve();
         });
 
@@ -70,6 +79,10 @@ class STTService extends EventEmitter {
         this.ws.on('close', (code, reason) => {
           console.log(`[STTService] Deepgram connection closed: ${code} ${reason}`);
           this.isConnected = false;
+          if (this.keepAliveInterval) {
+            clearInterval(this.keepAliveInterval);
+            this.keepAliveInterval = null;
+          }
         });
 
       } catch (err) {
@@ -89,6 +102,10 @@ class STTService extends EventEmitter {
   }
 
   disconnect() {
+    if (this.keepAliveInterval) {
+      clearInterval(this.keepAliveInterval);
+      this.keepAliveInterval = null;
+    }
     if (this.isConnected && this.ws) {
       // Send empty string to indicate end of stream in Deepgram
       if (this.ws.readyState === WebSocket.OPEN) {

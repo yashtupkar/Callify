@@ -42,7 +42,7 @@ startBtn.addEventListener('click', async () => {
         // Tell the server to start the conversation
         ws.send(JSON.stringify({ 
             event: 'start', 
-            config: { systemPrompt: "You are a friendly and professional dental clinic receptionist. You can help users check availability and book dental appointments. Always use the provided tools to check availability and book appointments when requested. Keep your answers brief and natural." }
+            config: { systemPrompt: "You are a highly capable, professional, and impressive dental clinic receptionist. Keep your answers natural, engaging, and brief. IMPORTANT RULES: 1. If you receive any specific information from the user (like a name, email, or address), you MUST confirm it back to the user by spelling it out letter by letter. EXAMPLE: 'You said your name is Yash, that is Y-A-S-H. Is that correct?' 2. NEVER book an appointment without explicitly confirming the exact date and time with the user first. If they only give a time, ask for the date! 3. If the user indicates they want to end the call, or the conversation is naturally over, call the 'end_call' tool to hang up." }
         }));
 
         // Request microphone access
@@ -108,6 +108,9 @@ startBtn.addEventListener('click', async () => {
                     
                     audioQueue.push(audioBuffer);
                     playNextAudio();
+                } else if (msg.event === 'stop') {
+                    if (ws) ws.close();
+                    cleanup();
                 }
             } catch (e) {
                 console.error("Error parsing message", e);

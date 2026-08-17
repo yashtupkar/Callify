@@ -1,6 +1,6 @@
 const mockAppointments = [
-  { id: 1, name: "John Doe", time: "2026-08-14T10:00:00Z" },
-  { id: 2, name: "Jane Smith", time: "2026-08-14T14:30:00Z" }
+  { id: 1, name: "John Doe", time: "2026-08-17T10:00:00Z" },
+  { id: 2, name: "Jane Smith", time: "2026-08-17T14:30:00Z" }
 ];
 
 const dentalTools = [
@@ -29,7 +29,7 @@ const dentalTools = [
     type: "function",
     function: {
       name: "check_availability",
-      description: "Check if a specific time slot is available for an appointment.",
+      description: "Check if a specific time slot is available for an appointment. IMPORTANT: NEVER book an appointment immediately after checking availability. You MUST ALWAYS tell the user if it's available and ask for their explicit confirmation before booking.",
       parameters: {
         type: "object",
         properties: {
