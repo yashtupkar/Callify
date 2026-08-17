@@ -11,6 +11,13 @@ class FishAudioTTSProvider extends EventEmitter {
     this.isProcessing = false;
   }
 
+  setVoiceId(voiceId) {
+    if (voiceId) {
+      this.voiceId = voiceId;
+      console.log(`[FishAudioTTSProvider] Voice ID set to ${voiceId}`);
+    }
+  }
+
   feedText(token) {
     if (!this.apiKey) {
       console.warn('[FishAudioTTSProvider] No FISH_API_KEY provided. Skipping TTS.');

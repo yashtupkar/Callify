@@ -22,6 +22,7 @@ class ConversationManager extends EventEmitter {
     
     this.isCallActive = false;
     this.transcript = [];
+    this.customTools = [];
 
     this.userSpeechBuffer = "";
     this.silenceTimeout = null;
@@ -106,35 +107,53 @@ class ConversationManager extends EventEmitter {
         return;
       }
       
-      const result = executeDentalTool(toolName, args);
+      // Check if it's a built-in dental tool
+      const isBuiltIn = dentalTools.some(t => t.function.name === toolName);
       
-      // Add tool message to transcript
-      this.transcript.push({
-        role: 'assistant',
-        content: null,
-        tool_calls: [{
-          id: "call_" + Math.random().toString(36).substring(7),
-          type: "function",
-          function: { name: toolName, arguments: JSON.stringify(args) }
-        }]
-      });
-      
-      this.transcript.push({
-        role: 'tool',
-        tool_call_id: this.transcript[this.transcript.length - 1].tool_calls[0].id,
-        name: toolName,
-        content: JSON.stringify(result)
-      });
-      
-      // Generate response after tool execution
-      const allTools = [...dentalTools, {
-        type: "function",
-        function: {
-          name: "end_call",
-          description: "Ends the current call. ONLY call this tool AFTER you have explicitly said a polite goodbye."
-        }
-      }];
-      this.llm.generateResponse(this.transcript, allTools);
+      if (isBuiltIn) {
+        const result = executeDentalTool(toolName, args);
+        
+        // Add tool message to transcript
+        this.transcript.push({
+          role: 'assistant',
+          content: null,
+          tool_calls: [{
+            id: "call_" + Math.random().toString(36).substring(7),
+            type: "function",
+            function: { name: toolName, arguments: JSON.stringify(args) }
+          }]
+        });
+        
+        this.transcript.push({
+          role: 'tool',
+          tool_call_id: this.transcript[this.transcript.length - 1].tool_calls[0].id,
+          name: toolName,
+          content: JSON.stringify(result)
+        });
+        
+        // Generate response after tool execution
+        this.llm.generateResponse(this.transcript, this.getAllTools());
+      } else {
+        // Route custom tool to frontend
+        console.log(`[ConversationManager] Routing custom tool ${toolName} to frontend.`);
+        
+        this.transcript.push({
+          role: 'assistant',
+          content: null,
+          tool_calls: [{
+            id: "call_" + Math.random().toString(36).substring(7),
+            type: "function",
+            function: { name: toolName, arguments: JSON.stringify(args) }
+          }]
+        });
+        
+        this.sendToClient({
+          event: 'tool_execution_request',
+          toolName: toolName,
+          args: args,
+          toolCallId: this.transcript[this.transcript.length - 1].tool_calls[0].id
+        });
+      }
     });
 
     // TTS Events
@@ -149,21 +168,52 @@ class ConversationManager extends EventEmitter {
     console.log('[ConversationManager] Starting conversation with config:', config);
     this.isCallActive = true;
     
+    // Process Voice Customization
+    if (config.voiceId) {
+      if (typeof this.tts.setVoiceId === 'function') {
+        this.tts.setVoiceId(config.voiceId);
+      }
+    }
+
+    // Process Custom Tools
+    if (config.customTools && Array.isArray(config.customTools)) {
+      this.customTools = config.customTools;
+    }
+    
     const basePrompt = config.systemPrompt || "You are a friendly and professional dental clinic receptionist. You can help users check availability and book dental appointments. Always use the provided tools to check availability and book appointments when requested. Keep your answers brief and natural.";
     
     // Inject the current date so the AI has temporal context and doesn't hallucinate dates
     const currentDateStr = new Date().toLocaleString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', hour: 'numeric', minute: 'numeric' });
-    const fullPrompt = `${basePrompt}\n\nCRITICAL CONTEXT: The current date and time is ${currentDateStr}. If the user provides a time without a date, you MUST ask them for the date. NEVER assume or hallucinate a date.`;
+    let fullPrompt = `${basePrompt}\n\nCRITICAL CONTEXT: The current date and time is ${currentDateStr}. If the user provides a time without a date, you MUST ask them for the date. NEVER assume or hallucinate a date.`;
     
+    // Inject Data Collection Requirements
+    if (config.dataToCollect && config.dataToCollect.length > 0) {
+      fullPrompt += `\n\nDATA COLLECTION MANDATE: Before fulfilling the user's request, calling ANY tools, or ending the call, you MUST ask the user for their: ${config.dataToCollect.join(', ')}. You are strictly forbidden from proceeding or calling tools until this information is fully collected.`;
+    }
+
     this.llm.initialize(fullPrompt);
     this.stt.connect().catch(e => console.error('[ConversationManager] STT connect error:', e));
     
     // Kick off the conversation with an instant greeting
-    const greeting = "Hi, thanks for calling! You’ve reached our reception desk. How can I help you today?";
+    const greeting = config.firstMessage || "Hi, thanks for calling! You’ve reached our reception desk. How can I help you today?";
     this.transcript.push({ role: 'assistant', content: greeting });
     this.sendToClient({ event: 'transcript', data: { text: greeting, isFinal: true, speaker: 'agent' } });
     this.tts.feedText(greeting);
     this.tts.flush();
+  }
+
+  getAllTools() {
+    return [
+      ...dentalTools, 
+      ...this.customTools,
+      {
+        type: "function",
+        function: {
+          name: "end_call",
+          description: "Ends the current call. ONLY call this tool AFTER you have explicitly said a polite goodbye."
+        }
+      }
+    ];
   }
 
   handleIncomingAudio(audioBuffer) {
@@ -174,14 +224,30 @@ class ConversationManager extends EventEmitter {
 
   handleUserUtterance(text) {
     this.transcript.push({ role: 'user', content: text });
-    const allTools = [...dentalTools, {
-      type: "function",
-      function: {
-        name: "end_call",
-        description: "Ends the current call. ONLY call this tool AFTER you have explicitly said a polite goodbye."
+    this.llm.generateResponse(this.transcript, this.getAllTools());
+  }
+
+  handleFrontendToolResult(toolName, result, toolCallId) {
+    console.log(`[ConversationManager] Received frontend result for ${toolName}:`, result);
+    
+    // Find the latest tool call in the transcript (if toolCallId not provided)
+    let targetId = toolCallId;
+    if (!targetId && this.transcript.length > 0) {
+      const lastMsg = this.transcript[this.transcript.length - 1];
+      if (lastMsg.tool_calls && lastMsg.tool_calls[0]) {
+        targetId = lastMsg.tool_calls[0].id;
       }
-    }];
-    this.llm.generateResponse(this.transcript, allTools);
+    }
+
+    this.transcript.push({
+      role: 'tool',
+      tool_call_id: targetId || ("call_" + Math.random().toString(36).substring(7)),
+      name: toolName,
+      content: JSON.stringify(result)
+    });
+    
+    // Generate the next response using the result
+    this.llm.generateResponse(this.transcript, this.getAllTools());
   }
 
   endConversation() {

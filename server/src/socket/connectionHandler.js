@@ -38,6 +38,10 @@ function setupConnectionHandler(ws, req) {
             console.log('[ConnectionHandler] Stop event received.');
             conversationManager.endConversation();
             break;
+          case 'tool_execution_result':
+            console.log('[ConnectionHandler] Tool execution result received:', msg.toolName);
+            conversationManager.handleFrontendToolResult(msg.toolName, msg.result, msg.toolCallId);
+            break;
           default:
             console.warn(`[ConnectionHandler] Unknown event type: ${msg.event}`);
         }

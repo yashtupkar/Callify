@@ -10,6 +10,13 @@ class TTSProvider extends EventEmitter {
     this.isGenerating = false;
   }
 
+  setVoiceId(voiceId) {
+    if (voiceId) {
+      this.voiceId = voiceId;
+      console.log(`[TTSProvider] Voice ID set to ${voiceId}`);
+    }
+  }
+
   _connect() {
     if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
       return;

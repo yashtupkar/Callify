@@ -39,10 +39,38 @@ startBtn.addEventListener('click', async () => {
         startBtn.disabled = true;
         stopBtn.disabled = false;
         
+        // Read configuration from UI
+        const firstMessage = document.getElementById('firstMessage').value;
+        const systemPrompt = document.getElementById('systemPrompt').value;
+        const voiceId = document.getElementById('voiceId').value;
+        
+        const dataToCollect = [];
+        if (document.getElementById('collectName').checked) dataToCollect.push('Name');
+        if (document.getElementById('collectEmail').checked) dataToCollect.push('Email');
+        if (document.getElementById('collectPhone').checked) dataToCollect.push('Phone Number');
+        
+        let customTools = [];
+        try {
+            const toolsText = document.getElementById('customTools').value.trim();
+            if (toolsText) {
+                customTools = JSON.parse(toolsText);
+            }
+        } catch (e) {
+            alert('Invalid JSON in Custom Tools field');
+            cleanup();
+            return;
+        }
+
         // Tell the server to start the conversation
         ws.send(JSON.stringify({ 
             event: 'start', 
-            config: { systemPrompt: "You are a highly capable, professional, and impressive dental clinic receptionist. Keep your answers natural, engaging, and brief. IMPORTANT RULES: 1. If you receive any specific information from the user (like a name, email, or address), you MUST confirm it back to the user by spelling it out letter by letter. EXAMPLE: 'You said your name is Yash, that is Y-A-S-H. Is that correct?' 2. NEVER book an appointment without explicitly confirming the exact date and time with the user first. If they only give a time, ask for the date! 3. If the user indicates they want to end the call, or the conversation is naturally over, call the 'end_call' tool to hang up." }
+            config: { 
+                systemPrompt: systemPrompt,
+                firstMessage: firstMessage,
+                voiceId: voiceId,
+                dataToCollect: dataToCollect,
+                customTools: customTools
+            }
         }));
 
         // Request microphone access
@@ -111,6 +139,23 @@ startBtn.addEventListener('click', async () => {
                 } else if (msg.event === 'stop') {
                     if (ws) ws.close();
                     cleanup();
+                } else if (msg.event === 'tool_execution_request') {
+                    console.log("Received custom tool execution request:", msg.toolName, msg.args);
+                    // Mock executing the tool on the frontend
+                    // In a real app, this would trigger frontend side-effects (like UI updates)
+                    // and then send back the result.
+                    appendLog('agent', `[Executing Tool on Frontend: ${msg.toolName}]`);
+                    
+                    // Automatically send a mock success result back to backend after 1 second
+                    setTimeout(() => {
+                        if (ws && ws.readyState === WebSocket.OPEN) {
+                            ws.send(JSON.stringify({
+                                event: 'tool_execution_result',
+                                toolName: msg.toolName,
+                                result: { success: true, message: `Simulated successful execution of ${msg.toolName}` }
+                            }));
+                        }
+                    }, 1000);
                 }
             } catch (e) {
                 console.error("Error parsing message", e);
