@@ -1,26 +1,28 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
+import { api } from '../lib/api';
 import { 
   Search,
   Wand2,
-  Play,
   Check,
   ChevronDown,
-  Edit2,
+  ChevronLeft,
+  Save,
+  Trash2,
+  AlertCircle
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { ModeToggle } from '../components/mode-toggle';
+import { WebDialer } from '../components/WebDialer';
 
 function Card({ title, subtitle, icon, provider, metrics }) {
   return (
-    <div className="bg-card border border-border rounded-xl p-4 hover:border-border/80 transition-all cursor-pointer">
+    <div className="bg-card border border-border rounded-xl p-4 hover:border-border/80 transition-all">
       <div className="flex justify-between items-start mb-4">
         <div className="flex items-center gap-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
           <div className="w-2 h-2 rounded-full bg-primary" />
           {title}
         </div>
-        <button className="text-muted-foreground hover:text-foreground">
-          <Edit2 size={14} />
-        </button>
       </div>
       
       <div className="mb-4">
@@ -43,40 +45,117 @@ function Card({ title, subtitle, icon, provider, metrics }) {
 }
 
 export function Composer() {
+  const { id } = useParams();
+  const navigate = useNavigate();
+  const [agent, setAgent] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  // Form states
+  const [name, setName] = useState('');
+  const [initialMessage, setInitialMessage] = useState('');
+  const [systemPrompt, setSystemPrompt] = useState('');
+  const [toolsStr, setToolsStr] = useState('');
+  const [toolsError, setToolsError] = useState('');
+
+  useEffect(() => {
+    if (id) {
+      loadAgent();
+    }
+  }, [id]);
+
+  const loadAgent = async () => {
+    try {
+      setLoading(true);
+      const data = await api.getAgent(id);
+      setAgent(data);
+      setName(data.name || '');
+      setInitialMessage(data.initialMessage || '');
+      setSystemPrompt(data.systemPrompt || '');
+      setToolsStr(data.tools ? JSON.stringify(data.tools, null, 2) : '[]');
+    } catch (err) {
+      console.error(err);
+      // maybe navigate back
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSave = async () => {
+    try {
+      setSaving(true);
+      setToolsError('');
+      let parsedTools = [];
+      
+      try {
+        parsedTools = JSON.parse(toolsStr);
+        if (!Array.isArray(parsedTools)) throw new Error('Tools must be a JSON array');
+      } catch (e) {
+        setToolsError('Invalid JSON format for tools');
+        setSaving(false);
+        return;
+      }
+
+      const updated = await api.updateAgent(id, {
+        name,
+        systemPrompt,
+        initialMessage,
+        tools: parsedTools
+      });
+      setAgent(updated);
+      // Optionally show a success toast here
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading) {
+    return <div className="flex h-full items-center justify-center">Loading agent...</div>;
+  }
+
+  if (!agent) {
+    return <div className="flex h-full items-center justify-center">Agent not found</div>;
+  }
+
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
       <header className="h-16 border-b border-border flex items-center justify-between px-6 bg-background/95 backdrop-blur z-10 sticky top-0 shrink-0">
         <div className="flex items-center gap-4">
+          <button 
+            onClick={() => navigate('/dashboard/agents')}
+            className="p-1.5 rounded-md hover:bg-accent text-muted-foreground hover:text-foreground transition-colors mr-2"
+          >
+            <ChevronLeft size={20} />
+          </button>
           <div className="flex items-center gap-3">
             <div className="w-8 h-8 bg-zinc-800 rounded flex items-center justify-center">
-              <span className="text-xs font-medium">LI</span>
+              <span className="text-xs font-medium text-white">{name.substring(0, 2).toUpperCase()}</span>
             </div>
             <div>
-              <h1 className="text-sm font-semibold text-foreground flex items-center gap-2">
-                Learnexa Interview agent
-              </h1>
-              <p className="text-xs text-muted-foreground flex items-center gap-1">
-                <span className="bg-emerald-500/10 text-emerald-500 px-1 rounded text-[10px] font-medium">v1</span>
-                828356...881cf6
+              <input 
+                type="text" 
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                className="text-sm font-semibold text-foreground bg-transparent border-none outline-none focus:ring-1 focus:ring-primary rounded px-1 -ml-1 w-[200px]"
+              />
+              <p className="text-[10px] text-muted-foreground flex items-center gap-1 mt-0.5">
+                <span className="bg-emerald-500/10 text-emerald-500 px-1 rounded font-medium">id: {agent.id.substring(0,8)}</span>
               </p>
             </div>
           </div>
         </div>
         
         <div className="flex items-center gap-3">
-          <button className="flex items-center gap-2 px-3 py-1.5 rounded-md bg-accent text-accent-foreground text-sm font-medium hover:bg-accent/80 transition-colors">
-            <Wand2 size={16} className="text-primary" />
-            Composer
-          </button>
-          <button className="flex items-center gap-2 px-3 py-1.5 rounded-md border border-border text-foreground text-sm font-medium hover:bg-accent transition-colors">
-            <Play size={16} className="text-emerald-500" />
-            Talk
-            <ChevronDown size={14} className="text-muted-foreground ml-1" />
-          </button>
-          <button className="flex items-center gap-2 px-3 py-1.5 rounded-md bg-background border border-border text-foreground text-sm font-medium hover:bg-accent transition-colors">
-            <Check size={16} className="text-muted-foreground" />
-            Published
+          <button 
+            onClick={handleSave}
+            disabled={saving}
+            className="flex items-center gap-2 px-3 py-1.5 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
+          >
+            <Save size={16} />
+            {saving ? 'Saving...' : 'Save Changes'}
           </button>
           <ModeToggle />
         </div>
@@ -84,138 +163,103 @@ export function Composer() {
 
       {/* Main Scrollable Area */}
       <div className="flex-1 overflow-auto p-6 max-w-[1200px] w-full mx-auto">
-        {/* Nav Tabs */}
-        <div className="flex items-center justify-between border-b border-border mb-6">
-          <div className="flex gap-6">
-            {['Assistant', 'Logs', 'Tools', 'Analysis', 'Advanced'].map((tab, i) => (
-              <button 
-                key={tab}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+          {/* Left Column: Configuration */}
+          <div className="lg:col-span-2 space-y-6">
+            
+            {/* Configuration Cards */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <Card 
+                title="Transcriber"
+                subtitle="Flux General English"
+                icon={<div className="w-3 h-3 bg-white rounded-sm" />}
+                provider="Deepgram · English"
+                metrics={[
+                  { label: "Latency", value: "380ms" },
+                  { label: "Cost", value: "$0.01/min" },
+                ]}
+              />
+              <Card 
+                title="Model"
+                subtitle="GPT-4o (Configured)"
+                icon={<div className="w-3 h-3 bg-white rounded-full" />}
+                provider="OpenAI"
+                metrics={[
+                  { label: "Latency", value: "690ms" },
+                  { label: "Cost", value: "$0.02/min" },
+                ]}
+              />
+            </div>
+
+            {/* First Message */}
+            <div className="bg-card border border-border rounded-xl overflow-hidden">
+              <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-muted/30">
+                <span className="text-sm font-semibold text-foreground">First Message</span>
+              </div>
+              <textarea 
+                value={initialMessage}
+                onChange={(e) => setInitialMessage(e.target.value)}
+                className="w-full bg-transparent text-sm p-4 text-foreground resize-none focus:outline-none min-h-[80px]"
+                placeholder="Hello, how can I help you today?"
+              />
+            </div>
+
+            {/* System Prompt */}
+            <div className="bg-card border border-border rounded-xl overflow-hidden">
+              <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-muted/30">
+                <span className="text-sm font-semibold text-foreground">System Prompt</span>
+              </div>
+              <textarea 
+                value={systemPrompt}
+                onChange={(e) => setSystemPrompt(e.target.value)}
+                className="w-full bg-transparent text-sm p-4 text-foreground resize-y focus:outline-none min-h-[250px]"
+                placeholder="You are a helpful AI assistant..."
+              />
+            </div>
+
+            {/* Tools Array */}
+            <div className="bg-card border border-border rounded-xl overflow-hidden">
+              <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-muted/30">
+                <span className="text-sm font-semibold text-foreground">Tools (JSON Array)</span>
+                {toolsError && <span className="text-xs text-red-500 flex items-center gap-1"><AlertCircle size={12}/> {toolsError}</span>}
+              </div>
+              <textarea 
+                value={toolsStr}
+                onChange={(e) => {
+                  setToolsStr(e.target.value);
+                  setToolsError('');
+                }}
                 className={cn(
-                  "pb-3 text-sm font-medium border-b-2 transition-colors flex items-center gap-2",
-                  i === 0 ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground hover:border-border"
+                  "w-full bg-transparent text-sm p-4 text-foreground resize-y focus:outline-none min-h-[200px] font-mono",
+                  toolsError ? "bg-red-500/5" : ""
                 )}
-              >
-                {i === 0 && <Wand2 size={16} />}
-                {tab}
-              </button>
-            ))}
-          </div>
-          <div className="pb-3">
-            <Search size={16} className="text-muted-foreground" />
-          </div>
-        </div>
+                placeholder="[{...}]"
+              />
+            </div>
 
-        {/* Metrics Bar */}
-        <div className="flex gap-8 mb-8 bg-card border border-border p-4 rounded-xl">
-          <div className="flex-1">
-            <div className="flex justify-between text-sm mb-2">
-              <span className="text-muted-foreground font-medium">Cost</span>
-              <span className="font-semibold text-foreground">~$0.10 <span className="text-muted-foreground font-normal text-xs">/min</span></span>
-            </div>
-            <div className="h-1.5 w-full bg-zinc-800 rounded-full overflow-hidden flex">
-              <div className="bg-emerald-500 w-1/3"></div>
-              <div className="bg-blue-500 w-1/4"></div>
-              <div className="bg-purple-500 w-1/5"></div>
-            </div>
           </div>
-          <div className="flex-1">
-            <div className="flex justify-between text-sm mb-2">
-              <span className="text-muted-foreground font-medium">Latency</span>
-              <span className="font-semibold text-foreground">~1,560 <span className="text-muted-foreground font-normal text-xs">ms</span></span>
-            </div>
-            <div className="h-1.5 w-full bg-zinc-800 rounded-full overflow-hidden flex">
-              <div className="bg-orange-500 w-1/3"></div>
-              <div className="bg-blue-500 w-1/4"></div>
-              <div className="bg-purple-500 w-1/5"></div>
-            </div>
-          </div>
-        </div>
 
-        {/* Model Presets */}
-        <div className="flex items-center gap-4 mb-6">
-          <span className="text-xs font-semibold text-muted-foreground">Model Presets</span>
-          <div className="flex gap-2">
-            {['Balanced', 'High Intelligence', 'Ultra Fast', 'Cost Saver', 'Customized'].map((preset, i) => (
-              <button 
-                key={preset}
-                className={cn(
-                  "px-3 py-1 rounded-full text-xs font-medium border transition-colors",
-                  i === 0 ? "bg-accent border-border text-foreground" : "bg-transparent border-transparent text-muted-foreground hover:bg-accent hover:text-foreground"
+          {/* Right Column: Web Dialer */}
+          <div className="lg:col-span-1 space-y-6">
+            <div className="sticky top-6">
+              <WebDialer agentId={agent.id} agentConfig={agent} />
+              
+              <div className="mt-6 bg-card border border-border rounded-xl p-4">
+                <h4 className="text-sm font-semibold mb-2">Linked Phone Numbers</h4>
+                {agent.phoneNumbers && agent.phoneNumbers.length > 0 ? (
+                  <ul className="space-y-2">
+                    {agent.phoneNumbers.map(pn => (
+                      <li key={pn.id} className="text-sm text-muted-foreground flex items-center gap-2">
+                        <div className="w-2 h-2 rounded-full bg-emerald-500" />
+                        {pn.phoneNumber}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="text-xs text-muted-foreground">No phone numbers linked to this agent yet. Go to Phone Numbers to map one.</p>
                 )}
-              >
-                {preset}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Configuration Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
-          <Card 
-            title="Transcriber"
-            subtitle="Flux General English"
-            icon={<div className="w-3 h-3 bg-white rounded-sm" />}
-            provider="Deepgram · English"
-            metrics={[
-              { label: "Latency", value: "380ms" },
-              { label: "Cost", value: "$0.01/min" },
-              { label: "Accuracy", value: "2.3% WER" },
-            ]}
-          />
-          <Card 
-            title="Model"
-            subtitle="GPT-4.1"
-            icon={<div className="w-3 h-3 bg-white rounded-full" />}
-            provider="OpenAI"
-            metrics={[
-              { label: "Latency", value: "690ms" },
-              { label: "Cost", value: "$0.02/min" },
-              { label: "Intelligence", value: "19" },
-            ]}
-          />
-          <Card 
-            title="Voice"
-            subtitle="Elliot"
-            icon={<div className="w-3 h-3 bg-white rotate-45" />}
-            provider="Vapi"
-            metrics={[
-              { label: "Latency", value: "490ms" },
-              { label: "Cost", value: "$0.02/min" },
-              { label: "Humanness", value: "—" },
-            ]}
-          />
-        </div>
-
-        {/* Text Areas */}
-        <div className="space-y-6">
-          <div className="bg-card border border-border rounded-xl overflow-hidden">
-            <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-card">
-              <span className="text-sm font-semibold text-foreground">First Message</span>
-              <button className="text-xs bg-accent border border-border rounded flex items-center px-2 py-1 gap-1">
-                Assistant speaks first <ChevronDown size={12} />
-              </button>
-            </div>
-            <textarea 
-              className="w-full bg-card text-sm p-4 text-foreground resize-none focus:outline-none min-h-[100px]"
-              defaultValue="Hello I am Rohan"
-            />
-          </div>
-
-          <div className="bg-card border border-border rounded-xl overflow-hidden">
-            <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-card">
-              <span className="text-sm font-semibold text-foreground">System Prompt</span>
-              <div className="flex items-center gap-2">
-                <Search size={14} className="text-muted-foreground" />
-                <span className="text-[10px] font-mono bg-zinc-800 text-zinc-400 px-1.5 py-0.5 rounded border border-zinc-700">Ctrl I</span>
-                <button className="text-xs bg-primary/10 text-primary border border-primary/20 rounded flex items-center px-2 py-1 gap-1 font-medium ml-2">
-                  <Wand2 size={12} /> Generate
-                </button>
               </div>
             </div>
-            <textarea 
-              className="w-full bg-card text-sm p-4 text-foreground resize-none focus:outline-none min-h-[150px]"
-              defaultValue="You are Rohan, an expert and friendly interviewer."
-            />
           </div>
         </div>
       </div>

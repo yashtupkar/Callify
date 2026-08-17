@@ -14,10 +14,7 @@ function setupConnectionHandler(ws, req) {
 
   const conversationManager = new ConversationManager(ws);
 
-  // If connected via Twilio or SignalWire, automatically start the conversation
-  if (protocol === 'twilio' || protocol === 'signalwire') {
-    conversationManager.startConversation({ agentId }, protocol);
-  }
+  // We will start the conversation when we receive the 'start' event with streamSid
 
   ws.on('message', async (message) => {
     try {
@@ -42,6 +39,8 @@ function setupConnectionHandler(ws, req) {
           } else if (msg.event === 'start') {
             console.log(`[ConnectionHandler] ${protocol} Stream started`, msg.streamSid);
             conversationManager.twilioStreamSid = msg.streamSid; // Save for sending audio back
+            // Start conversation now that we have streamSid
+            conversationManager.startConversation({ agentId }, protocol);
           }
         } else {
           // Web Client format
