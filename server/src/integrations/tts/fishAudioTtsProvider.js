@@ -54,6 +54,7 @@ class FishAudioTTSProvider extends TTSProvider {
       await this.fetchAndEmit(text);
     }
     this.isProcessing = false;
+    this.emit('utterance_complete');
   }
 
   interrupt() {
@@ -65,6 +66,7 @@ class FishAudioTTSProvider extends TTSProvider {
       this.abortController.abort();
       this.abortController = null;
     }
+    this.emit('utterance_interrupted');
   }
 
   async flush() {

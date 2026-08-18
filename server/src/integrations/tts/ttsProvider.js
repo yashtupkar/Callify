@@ -52,6 +52,7 @@ class ElevenLabsTTSProvider extends TTSProvider {
         }
         if (response.isFinal) {
           this.isGenerating = false;
+          this.emit('utterance_complete');
         }
       } catch (e) {
         console.error('[TTSProvider] Error parsing message', e);
@@ -103,6 +104,7 @@ class ElevenLabsTTSProvider extends TTSProvider {
       this.ws.close();
       this.ws = null;
       this.isGenerating = false;
+      this.emit('utterance_interrupted');
     }
   }
 

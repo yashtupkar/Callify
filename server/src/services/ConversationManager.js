@@ -328,21 +328,33 @@ RULES FOR DATA COLLECTION:
     } else {
       console.log(`[ConversationManager] Cache miss for greeting. Generating and caching...`);
       let audioChunks = [];
-      let captureTimer = null;
+      let interrupted = false;
       
       const onAudio = (chunk) => {
         audioChunks.push(chunk);
-        clearTimeout(captureTimer);
-        captureTimer = setTimeout(() => {
-          this.tts.removeListener('audio', onAudio);
-          if (audioChunks.length > 0) {
-            ttsCache.set(cacheKey, Buffer.concat(audioChunks));
-            console.log(`[ConversationManager] Saved greeting to cache.`);
-          }
-        }, 1000); // 1 second without audio chunks means TTS for greeting is done
+      };
+      
+      const onInterrupted = () => {
+        interrupted = true;
+      };
+      
+      const onComplete = () => {
+        this.tts.removeListener('audio', onAudio);
+        this.tts.removeListener('utterance_interrupted', onInterrupted);
+        this.tts.removeListener('utterance_complete', onComplete);
+        
+        if (audioChunks.length > 0 && !interrupted) {
+          ttsCache.set(cacheKey, Buffer.concat(audioChunks));
+          console.log(`[ConversationManager] Saved greeting to cache.`);
+        } else {
+          console.log(`[ConversationManager] Greeting was interrupted, bypassing cache save.`);
+        }
       };
       
       this.tts.on('audio', onAudio);
+      this.tts.once('utterance_interrupted', onInterrupted);
+      this.tts.once('utterance_complete', onComplete);
+      
       this.tts.feedText(greeting);
       this.tts.flush();
     }
