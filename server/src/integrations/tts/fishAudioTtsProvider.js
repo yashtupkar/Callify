@@ -99,33 +99,10 @@ class FishAudioTTSProvider extends TTSProvider {
       }
 
       if (response.body) {
-        let leftover = Buffer.alloc(0);
-        const MIN_CHUNK_SIZE = 8192; // 8KB chunks prevent WebAudio crackling
-        
-        for await (const chunk of response.body) {
-          leftover = Buffer.concat([leftover, Buffer.from(chunk)]);
-          
-          while (leftover.length >= MIN_CHUNK_SIZE) {
-            // Ensure even byte alignment for 16-bit PCM
-            let sendLength = MIN_CHUNK_SIZE;
-            if (sendLength % 2 !== 0) sendLength--;
-            
-            const toSend = leftover.subarray(0, sendLength);
-            leftover = leftover.subarray(sendLength);
-            
-            this.emit('audio', Buffer.from(toSend));
-          }
-        }
-        
-        if (leftover.length > 0) {
-          // If the final chunk is odd, drop the last byte to keep alignment
-          if (leftover.length % 2 !== 0) {
-            leftover = leftover.subarray(0, leftover.length - 1);
-          }
-          if (leftover.length > 0) {
-            this.emit('audio', Buffer.from(leftover));
-          }
-        }
+        const arrayBuffer = await response.arrayBuffer();
+        const fullBuffer = Buffer.from(arrayBuffer);
+        console.log(`[FishAudioTTSProvider] Generated ${fullBuffer.length} bytes of audio for text.`);
+        this.emit('audio', fullBuffer);
       }
     } catch (err) {
       console.error('[FishAudioTTSProvider] Error fetching audio:', err);

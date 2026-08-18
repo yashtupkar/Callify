@@ -10,12 +10,17 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Phone, PhoneOff, Settings2, User, Plus, Save, Trash2, Mic } from 'lucide-react';
 
 const API_BASE = 'http://localhost:8083/api/agents';
+const PHONE_API_BASE = 'http://localhost:8083/api/phonenumbers';
 
 function App() {
   const { isConnected, isAgentSpeaking, transcript, usage, cost, startSession, endSession } = useVoiceSession('ws://localhost:8083');
   
   const [agents, setAgents] = useState([]);
   const [activeAgentId, setActiveAgentId] = useState(null);
+  
+  const [phoneNumbers, setPhoneNumbers] = useState([]);
+  const [showPhoneDialog, setShowPhoneDialog] = useState(false);
+  const [newPhoneNumber, setNewPhoneNumber] = useState('');
 
   const [config, setConfig] = useState({
     name: "Dental Receptionist",
@@ -30,7 +35,17 @@ function App() {
 
   useEffect(() => {
     fetchAgents();
+    fetchPhoneNumbers();
   }, []);
+
+  const fetchPhoneNumbers = async () => {
+    try {
+      const res = await axios.get(PHONE_API_BASE);
+      setPhoneNumbers(res.data);
+    } catch (err) {
+      console.error("Failed to fetch phone numbers", err);
+    }
+  };
 
   const fetchAgents = async () => {
     try {
@@ -162,9 +177,14 @@ function App() {
           <h2 className="font-semibold text-lg flex items-center gap-2">
             <Settings2 className="w-5 h-5 text-zinc-400" /> Agents
           </h2>
-          <Button onClick={createNewAgent} size="icon" variant="ghost" className="h-8 w-8 rounded-full">
-            <Plus className="h-5 w-5" />
-          </Button>
+          <div className="flex gap-1">
+            <Button onClick={() => setShowPhoneDialog(true)} size="icon" variant="ghost" className="h-8 w-8 rounded-full" title="Manage Phone Numbers">
+              <Phone className="h-4 w-4" />
+            </Button>
+            <Button onClick={createNewAgent} size="icon" variant="ghost" className="h-8 w-8 rounded-full" title="Create New Agent">
+              <Plus className="h-5 w-5" />
+            </Button>
+          </div>
         </div>
         <ScrollArea className="flex-1">
           <div className="p-2 space-y-1">
@@ -260,6 +280,43 @@ function App() {
                 placeholder="Leave blank for default"
               />
             </div>
+            
+            {/* Phone Number Assignment */}
+            {activeAgentId && (
+              <div className="space-y-3 pt-4 border-t border-border">
+                <label className="text-sm font-medium">Assigned Phone Numbers</label>
+                <div className="space-y-2">
+                  {phoneNumbers.length === 0 ? (
+                    <p className="text-xs text-zinc-500">No phone numbers added. Click the phone icon on the left to add one.</p>
+                  ) : (
+                    phoneNumbers.map(phone => (
+                      <label key={phone.id} className="flex items-center gap-2 text-sm cursor-pointer hover:text-zinc-300">
+                        <input
+                          type="checkbox"
+                          className="w-4 h-4 rounded border-zinc-700 bg-zinc-900 text-primary focus:ring-primary focus:ring-offset-background"
+                          checked={phone.agentId === activeAgentId}
+                          onChange={async (e) => {
+                            const isChecked = e.target.checked;
+                            try {
+                              await axios.put(`${PHONE_API_BASE}/${phone.id}`, {
+                                agentId: isChecked ? activeAgentId : null
+                              });
+                              fetchPhoneNumbers();
+                            } catch (err) {
+                              console.error('Failed to update phone number assignment', err);
+                            }
+                          }}
+                        />
+                        {phone.phoneNumber}
+                        {phone.agentId && phone.agentId !== activeAgentId && (
+                          <span className="text-xs text-zinc-500 ml-2">(Currently assigned to another agent)</span>
+                        )}
+                      </label>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         </ScrollArea>
       </div>
@@ -370,6 +427,65 @@ function App() {
           <DialogFooter>
             <Button onClick={() => setShowAnalytics(false)} className="w-full">Close</Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Phone Number Management Modal */}
+      <Dialog open={showPhoneDialog} onOpenChange={setShowPhoneDialog}>
+        <DialogContent className="bg-card text-foreground border-border max-w-md">
+          <DialogHeader>
+            <DialogTitle>Manage Phone Numbers</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="flex gap-2">
+              <Input 
+                placeholder="+1234567890" 
+                value={newPhoneNumber} 
+                onChange={e => setNewPhoneNumber(e.target.value)} 
+                className="bg-background"
+              />
+              <Button onClick={async () => {
+                if (!newPhoneNumber) return;
+                try {
+                  await axios.post(PHONE_API_BASE, { phoneNumber: newPhoneNumber });
+                  setNewPhoneNumber('');
+                  fetchPhoneNumbers();
+                } catch(e) {
+                  alert("Failed to add number (might already exist)");
+                }
+              }}>Add</Button>
+            </div>
+            
+            <div className="space-y-2 mt-4 max-h-[250px] overflow-y-auto pr-2">
+              {phoneNumbers.length === 0 ? (
+                <p className="text-sm text-zinc-500 text-center py-4">No numbers added yet.</p>
+              ) : (
+                phoneNumbers.map(phone => {
+                  const assignedAgent = agents.find(a => a.id === phone.agentId);
+                  return (
+                    <div key={phone.id} className="flex justify-between items-center p-2 rounded-md bg-zinc-900/50 border border-border">
+                      <div>
+                        <p className="font-mono text-sm">{phone.phoneNumber}</p>
+                        <p className="text-xs text-zinc-500">
+                          {assignedAgent ? `Assigned to: ${assignedAgent.name}` : 'Unassigned'}
+                        </p>
+                      </div>
+                      <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={async () => {
+                        try {
+                          await axios.delete(`${PHONE_API_BASE}/${phone.id}`);
+                          fetchPhoneNumbers();
+                        } catch(e) {
+                          console.error('Failed to delete', e);
+                        }
+                      }}>
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
     </div>

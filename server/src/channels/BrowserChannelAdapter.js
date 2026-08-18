@@ -19,8 +19,8 @@ class BrowserChannelAdapter extends ChannelAdapter {
 
   sendAudio(audioData) {
     if (this.ws && this.ws.readyState === 1) { // WebSocket.OPEN
-      // For browser, we wrap audio in our JSON protocol or send as base64
-      this.sendControlMessage({ type: 'audio.output', data: audioData.toString('base64') });
+      // For browser, we wrap audio in our JSON protocol
+      this.sendControlMessage({ event: 'audio', data: audioData.toString('base64') });
     }
   }
 

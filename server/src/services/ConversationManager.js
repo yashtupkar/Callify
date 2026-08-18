@@ -210,8 +210,10 @@ class ConversationManager extends EventEmitter {
 
     // TTS Events
     this.tts.on('audio', (audioBuffer) => {
-      // Send raw audio bytes down to the client WebSocket
-      this.sendToClient({ event: 'audio', data: audioBuffer.toString('base64') });
+      // Let the channel adapter handle audio formatting (JSON wrapping vs Base64 Mulaw)
+      if (this.channel && typeof this.channel.sendAudio === 'function') {
+          this.channel.sendAudio(audioBuffer);
+      }
     });
 
     this.tts.on('tts_characters', (count) => {
@@ -219,7 +221,7 @@ class ConversationManager extends EventEmitter {
     });
   }
 
-  async startConversation(config) {
+  async startConversation(config, provider = 'browser') {
     this.sendToClient({ event: 'start', config });
     console.log('[ConversationManager] Starting conversation with config:', config);
     this.isCallActive = true;
@@ -271,7 +273,7 @@ RULES FOR DATA COLLECTION:
     }
 
     this.llm.initialize(fullPrompt);
-    this.stt.connect().catch(e => console.error('[ConversationManager] STT connect error:', e));
+    this.stt.connect(provider).catch(e => console.error('[ConversationManager] STT connect error:', e));
     
     // Kick off the conversation with an instant greeting
     const greeting = config.firstMessage || "Hi, thanks for calling! You’ve reached our reception desk. How can I help you today?";
