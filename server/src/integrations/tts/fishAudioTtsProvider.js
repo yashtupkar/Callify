@@ -1,14 +1,16 @@
 const { TTSProvider } = require('../ProviderInterfaces');
 
 class FishAudioTTSProvider extends TTSProvider {
-  constructor() {
+  constructor(config = {}) {
     super();
     this.apiKey = process.env.FISH_API_KEY;
     this.voiceId = process.env.FISH_VOICE_ID || '933563129e564b19a115bedd57b7406a';
+    this.sampleRate = config.sampleRate || 16000;
     this.textBuffer = "";
     this.isGenerating = false;
     this.queue = [];
     this.isProcessing = false;
+    this.abortController = null;
   }
 
   setVoiceId(voiceId) {
@@ -27,8 +29,8 @@ class FishAudioTTSProvider extends TTSProvider {
     this.isGenerating = true;
     this.emit('tts_characters', token.length);
 
-    // Look for sentence boundaries (punctuation followed by a space or newline)
-    const match = this.textBuffer.match(/^(.*?[\.\?\!\n])(?: |\n)(.*)$/s);
+    // Look for sentence boundaries (punctuation followed by a space or newline). Included commas, dashes, colons for faster first-response!
+    const match = this.textBuffer.match(/^(.*?[\.\?\!\n\,\-\:])(?: |\n)(.*)$/s);
     if (match) {
       const sentence = match[1].trim();
       this.textBuffer = (match[2] || "").trimStart();
@@ -59,7 +61,10 @@ class FishAudioTTSProvider extends TTSProvider {
     this.textBuffer = "";
     this.queue = [];
     this.isGenerating = false;
-    // We can't easily abort an ongoing fetch here without AbortController, but clearing the queue stops subsequent ones.
+    if (this.abortController) {
+      this.abortController.abort();
+      this.abortController = null;
+    }
   }
 
   async flush() {
@@ -77,9 +82,12 @@ class FishAudioTTSProvider extends TTSProvider {
   async fetchAndEmit(text) {
     if (!text.trim()) return;
 
+    this.abortController = new AbortController();
+
     try {
       const response = await fetch("https://api.fish.audio/v1/tts", {
         method: "POST",
+        signal: this.abortController.signal,
         headers: {
           Authorization: `Bearer ${this.apiKey}`,
           "Content-Type": "application/json",
@@ -89,7 +97,7 @@ class FishAudioTTSProvider extends TTSProvider {
           text: text,
           reference_id: this.voiceId,
           format: "pcm",
-          sample_rate: 16000
+          sample_rate: this.sampleRate
         }),
       });
 
@@ -99,13 +107,37 @@ class FishAudioTTSProvider extends TTSProvider {
       }
 
       if (response.body) {
-        const arrayBuffer = await response.arrayBuffer();
-        const fullBuffer = Buffer.from(arrayBuffer);
-        console.log(`[FishAudioTTSProvider] Generated ${fullBuffer.length} bytes of audio for text.`);
-        this.emit('audio', fullBuffer);
+        let leftover = Buffer.alloc(0);
+        const MIN_CHUNK_SIZE = 8192; // Stream in 8KB chunks (about 0.25s of audio) for lowest latency
+        
+        for await (const chunk of response.body) {
+          leftover = Buffer.concat([leftover, Buffer.from(chunk)]);
+          
+          while (leftover.length >= MIN_CHUNK_SIZE) {
+            // Ensure even byte alignment for 16-bit PCM
+            let sendLength = MIN_CHUNK_SIZE;
+            if (sendLength % 2 !== 0) sendLength--;
+            
+            const toSend = leftover.subarray(0, sendLength);
+            leftover = leftover.subarray(sendLength);
+            
+            this.emit('audio', Buffer.from(toSend));
+          }
+        }
+        
+        if (leftover.length > 0) {
+          if (leftover.length % 2 !== 0) leftover = leftover.subarray(0, leftover.length - 1);
+          if (leftover.length > 0) this.emit('audio', Buffer.from(leftover));
+        }
       }
     } catch (err) {
-      console.error('[FishAudioTTSProvider] Error fetching audio:', err);
+      if (err.name === 'AbortError') {
+        console.log('[FishAudioTTSProvider] TTS fetch aborted');
+      } else {
+        console.error('[FishAudioTTSProvider] Error fetching audio:', err);
+      }
+    } finally {
+      this.abortController = null;
     }
   }
 }

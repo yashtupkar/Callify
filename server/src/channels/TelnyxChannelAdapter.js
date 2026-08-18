@@ -21,46 +21,67 @@ class TelnyxChannelAdapter extends ChannelAdapter {
     });
   }
 
+  clearAudio() {
+    if (this.ws && this.ws.readyState === 1 && this.streamSid) {
+      const message = {
+        event: 'clear',
+        stream_id: this.streamSid
+      };
+      this.ws.send(JSON.stringify(message));
+      console.log('[TelnyxChannelAdapter] Sent clear event to flush audio buffer');
+    }
+  }
+
   /**
    * Send audio back to Telnyx.
    * Telnyx expects base64 encoded G.711 PCMU (mu-law) audio.
    * @param {Buffer} audioData - The audio bytes.
    */
-  sendAudio(audioData) {
+  sendAudio(audioData, sampleRate = 16000) {
     if (this.ws && this.ws.readyState === 1) {
       try {
-        let wav = new WaveFile();
-        // TTS sends 16-bit PCM at 16000 Hz, mono.
-        // We must convert the Buffer (Uint8Array) to Int16Array for wavefile to process it correctly.
         const int16Samples = new Int16Array(audioData.buffer, audioData.byteOffset, audioData.length / 2);
-        wav.fromScratch(1, 16000, '16', int16Samples);
-        wav.toSampleRate(8000);
+        let finalSamples = int16Samples;
+        let finalSampleRate = sampleRate;
+
+        if (sampleRate === 16000) {
+          // Downsample to 8000Hz by averaging adjacent samples (stateless 2:1 decimation).
+          // This avoids wavefile's stateful toSampleRate() which causes audio breaking/clicking at chunk boundaries.
+          finalSamples = new Int16Array(int16Samples.length / 2);
+          for (let i = 0; i < finalSamples.length; i++) {
+             finalSamples[i] = (int16Samples[i * 2] + int16Samples[i * 2 + 1]) / 2;
+          }
+          finalSampleRate = 8000;
+        }
+
+        let wav = new WaveFile();
+        wav.fromScratch(1, finalSampleRate, '16', finalSamples);
+        
+        if (finalSampleRate !== 8000) {
+          wav.toSampleRate(8000); // Fallback for other rates
+        }
         wav.toMuLaw();
         
         // Get raw mulaw samples (strip wav header)
         const rawSamples = wav.data.samples;
         
-        console.log(`[TelnyxChannelAdapter] Sending ${rawSamples.length} bytes of mu-law audio to Telnyx in chunks`);
+        console.log(`[TelnyxChannelAdapter] Sending ${rawSamples.length} bytes of mu-law audio to Telnyx`);
         
-        // Telnyx (like Twilio) expects small media payloads (ideally 20ms which is 160 bytes for G.711)
-        const CHUNK_SIZE = 160;
-        for (let i = 0; i < rawSamples.length; i += CHUNK_SIZE) {
-          const chunk = rawSamples.subarray(i, i + CHUNK_SIZE);
-          const base64Audio = Buffer.from(chunk).toString('base64');
-          
-          const message = {
-            event: 'media',
-            media: {
-              payload: base64Audio
-            }
-          };
-          
-          if (this.streamSid) {
-              message.stream_id = this.streamSid;
+        // Telnyx buffers the audio natively, so we just send the entire converted payload
+        const base64Audio = Buffer.from(rawSamples).toString('base64');
+        
+        const message = {
+          event: 'media',
+          media: {
+            payload: base64Audio
           }
-
-          this.ws.send(JSON.stringify(message));
+        };
+        
+        if (this.streamSid) {
+            message.stream_id = this.streamSid;
         }
+
+        this.ws.send(JSON.stringify(message));
       } catch (err) {
         console.error('[TelnyxChannelAdapter] Error transcoding audio:', err);
       }

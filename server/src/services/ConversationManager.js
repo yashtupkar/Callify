@@ -7,6 +7,7 @@ const { dentalTools, executeDentalTool } = require('../integrations/llm/dentalTo
 const { UsageTracker } = require('./UsageTracker');
 const { CostCalculator } = require('./CostCalculator');
 const { dbService } = require('./DatabaseService');
+const { ttsCache } = require('../integrations/tts/ttsCache');
 
 class ConversationManager extends EventEmitter {
   constructor(channelAdapter) {
@@ -21,8 +22,9 @@ class ConversationManager extends EventEmitter {
     
     // Choose TTS provider based on env var, defaulting to ElevenLabs
     const ttsProviderStr = (process.env.TTS_PROVIDER || '').trim().toLowerCase();
+    
     if (ttsProviderStr === 'fish') {
-      this.tts = new FishAudioTTSProvider();
+      this.tts = new FishAudioTTSProvider({ sampleRate: 16000 });
     } else {
       this.tts = new TTSProvider();
     }
@@ -35,7 +37,7 @@ class ConversationManager extends EventEmitter {
 
     this.userSpeechBuffer = "";
     this.silenceTimeout = null;
-    this.TURN_TIMEOUT_MS = 700; // Wait 0.7 seconds of silence before responding to prevent sentence splitting
+    this.TURN_TIMEOUT_MS = 150; // Ultra-low latency for instant response
     
     this.setupListeners();
     this.setupChannelListeners();
@@ -97,6 +99,11 @@ class ConversationManager extends EventEmitter {
       if (this.llm.abort) {
         this.llm.abort();
       }
+      
+      if (this.channel && typeof this.channel.clearAudio === 'function') {
+        this.channel.clearAudio();
+      }
+      
       this.sendToClient({ event: 'clear_audio' });
     });
 
@@ -138,6 +145,10 @@ class ConversationManager extends EventEmitter {
       if (toolName === 'save_collected_data') {
         console.log(`[ConversationManager] Data successfully collected:`, args);
         
+        // Filler Phrase for Masking Latency
+        this.tts.feedText("Got it, let me save that... ");
+        this.tts.flush();
+        
         this.transcript.push({
           role: 'assistant',
           content: null,
@@ -163,6 +174,15 @@ class ConversationManager extends EventEmitter {
       const isBuiltIn = dentalTools.some(t => t.function.name === toolName);
       
       if (isBuiltIn) {
+        // Filler Phrases for Built-in Dental Tools
+        if (toolName === 'check_availability') {
+          this.tts.feedText("Let me check the schedule for that time... ");
+          this.tts.flush();
+        } else if (toolName === 'book_appointment') {
+          this.tts.feedText("Alright, let me get that booked for you... ");
+          this.tts.flush();
+        }
+
         const result = executeDentalTool(toolName, args);
         
         // Add tool message to transcript
@@ -189,6 +209,10 @@ class ConversationManager extends EventEmitter {
         // Route custom tool to frontend
         console.log(`[ConversationManager] Routing custom tool ${toolName} to frontend.`);
         
+        // Generic filler phrase for custom tools
+        this.tts.feedText("One moment, I'm processing that... ");
+        this.tts.flush();
+        
         this.transcript.push({
           role: 'assistant',
           content: null,
@@ -212,7 +236,7 @@ class ConversationManager extends EventEmitter {
     this.tts.on('audio', (audioBuffer) => {
       // Let the channel adapter handle audio formatting (JSON wrapping vs Base64 Mulaw)
       if (this.channel && typeof this.channel.sendAudio === 'function') {
-          this.channel.sendAudio(audioBuffer);
+          this.channel.sendAudio(audioBuffer, this.tts.sampleRate || 16000);
       }
     });
 
@@ -279,8 +303,49 @@ RULES FOR DATA COLLECTION:
     const greeting = config.firstMessage || "Hi, thanks for calling! You’ve reached our reception desk. How can I help you today?";
     this.transcript.push({ role: 'assistant', content: greeting });
     this.sendToClient({ event: 'transcript', data: { text: greeting, isFinal: true, speaker: 'agent' } });
-    this.tts.feedText(greeting);
-    this.tts.flush();
+    
+    const providerName = (process.env.TTS_PROVIDER || '').trim().toLowerCase() === 'fish' ? 'fish' : 'elevenlabs';
+    const voiceId = config.voiceId || this.tts.voiceId || 'default';
+    const cacheKey = ttsCache.generateKey(providerName, voiceId, greeting);
+    const cachedAudio = ttsCache.get(cacheKey);
+
+    if (cachedAudio) {
+      console.log(`[ConversationManager] Cache hit for greeting! Playing instantly.`);
+      if (this.channel && typeof this.channel.sendAudio === 'function') {
+        // Send in chunks to simulate streaming and avoid overwhelming the channel buffer
+        let offset = 0;
+        const chunkSize = 8192;
+        const sendChunks = () => {
+          if (offset < cachedAudio.length && this.isCallActive) {
+            const end = Math.min(offset + chunkSize, cachedAudio.length);
+            this.channel.sendAudio(cachedAudio.subarray(offset, end), this.tts.sampleRate || 16000);
+            offset += chunkSize;
+            setTimeout(sendChunks, 5); // tiny delay
+          }
+        };
+        sendChunks();
+      }
+    } else {
+      console.log(`[ConversationManager] Cache miss for greeting. Generating and caching...`);
+      let audioChunks = [];
+      let captureTimer = null;
+      
+      const onAudio = (chunk) => {
+        audioChunks.push(chunk);
+        clearTimeout(captureTimer);
+        captureTimer = setTimeout(() => {
+          this.tts.removeListener('audio', onAudio);
+          if (audioChunks.length > 0) {
+            ttsCache.set(cacheKey, Buffer.concat(audioChunks));
+            console.log(`[ConversationManager] Saved greeting to cache.`);
+          }
+        }, 1000); // 1 second without audio chunks means TTS for greeting is done
+      };
+      
+      this.tts.on('audio', onAudio);
+      this.tts.feedText(greeting);
+      this.tts.flush();
+    }
   }
 
   getAllTools() {

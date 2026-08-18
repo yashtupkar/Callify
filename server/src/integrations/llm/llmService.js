@@ -114,8 +114,8 @@ class LLMService extends LLMProvider {
       }
 
     } catch (error) {
-      if (error.name === 'AbortError' || error.name === 'APIUserAbortError') {
-        console.log('[LLMService] Generation aborted by user.');
+      if (error.name === 'AbortError' || error.name === 'APIUserAbortError' || (error.message && error.message.includes('aborted'))) {
+        // Silently handle the intentional interruption to prevent scary log spam
         return;
       }
       console.error("[LLMService] Error generating response:", error);
