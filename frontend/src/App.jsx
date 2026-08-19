@@ -28,6 +28,7 @@ function App() {
     dataToCollect: ["Name", "Email", "Phone"],
     customToolsStr: "",
     voiceId: "",
+    language: "en-US",
     initialMessage: "Hi, thanks for calling! You've reached our reception desk. How can I help you today?"
   });
 
@@ -77,6 +78,7 @@ function App() {
       systemPrompt: agent.systemPrompt,
       initialMessage: agent.initialMessage,
       voiceId: agent.voiceId || "",
+      language: agent.language || "en-US",
       dataToCollect: toolsArr,
       customToolsStr: customToolsStr
     });
@@ -90,6 +92,7 @@ function App() {
       dataToCollect: ["Name", "Email", "Phone"],
       customToolsStr: "",
       voiceId: "",
+      language: "en-US",
       initialMessage: "Hi, thanks for calling! You've reached our reception desk. How can I help you today?"
     });
   };
@@ -110,6 +113,7 @@ function App() {
       systemPrompt: config.systemPrompt,
       initialMessage: config.initialMessage,
       voiceId: config.voiceId,
+      language: config.language,
       tools: { 
         dataToCollect: config.dataToCollect,
         customTools: parsedCustomTools
@@ -149,6 +153,7 @@ function App() {
       systemPrompt: config.systemPrompt,
       dataToCollect: config.dataToCollect,
       voiceId: config.voiceId,
+      language: config.language,
       firstMessage: config.initialMessage,
       customTools: parsedCustomTools
     });
@@ -279,6 +284,17 @@ function App() {
                 className="bg-card"
                 placeholder="Leave blank for default"
               />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Language</label>
+              <select
+                value={config.language}
+                onChange={e => setConfig({...config, language: e.target.value})}
+                className="flex h-10 w-full rounded-md border border-input bg-card px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              >
+                <option value="en-US">English (US)</option>
+                <option value="hi-IN">Hindi (India)</option>
+              </select>
             </div>
             
             {/* Phone Number Assignment */}

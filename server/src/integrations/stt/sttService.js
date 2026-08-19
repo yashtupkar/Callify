@@ -12,13 +12,14 @@ class STTService extends STTProvider {
     this.keepAliveInterval = null;
   }
 
-  async connect(provider = 'browser') {
+  async connect(provider = 'browser', language = 'en-US') {
     return new Promise((resolve, reject) => {
       try {
-        console.log(`[STTService] Connecting to Deepgram WebSocket for provider: ${provider}...`);
+        console.log(`[STTService] Connecting to Deepgram WebSocket for provider: ${provider}, language: ${language}...`);
         
         const apiKey = process.env.DEEPGRAM_API_KEY;
-        let url = 'wss://api.deepgram.com/v1/listen?model=nova-2&smart_format=true&interim_results=true&endpointing=200&vad_events=true&keepalive=true';
+        const deepgramLang = language === 'hi-IN' ? 'hi' : language.split('-')[0];
+        let url = `wss://api.deepgram.com/v1/listen?model=nova-2&smart_format=true&interim_results=true&endpointing=200&vad_events=true&keepalive=true&language=${deepgramLang}`;
         
         if (provider === 'telnyx') {
           url += '&encoding=mulaw&sample_rate=8000';

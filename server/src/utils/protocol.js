@@ -58,6 +58,7 @@ function validateSessionStart(payload) {
       systemPrompt: config.systemPrompt || '',
       firstMessage: config.firstMessage || '',
       voiceId: config.voiceId || null,
+      language: config.language || 'en-US',
       dataToCollect: Array.isArray(config.dataToCollect) ? config.dataToCollect : [],
       customTools: config.customTools || []
     }

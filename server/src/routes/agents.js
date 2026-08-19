@@ -18,7 +18,7 @@ router.get('/', async (req, res) => {
 // POST /api/agents - Create a new agent
 router.post('/', async (req, res) => {
   try {
-    const { name, systemPrompt, initialMessage, voiceId, tools } = req.body;
+    const { name, systemPrompt, initialMessage, voiceId, language, tools } = req.body;
     
     // Fallback if tools is string, try parsing or default to empty
     let parsedTools = null;
@@ -34,6 +34,7 @@ router.post('/', async (req, res) => {
         systemPrompt: systemPrompt || '',
         initialMessage: initialMessage || 'Hello!',
         voiceId: voiceId || null,
+        language: language || 'en-US',
         tools: parsedTools,
       }
     });
@@ -48,7 +49,7 @@ router.post('/', async (req, res) => {
 router.put('/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, systemPrompt, initialMessage, voiceId, tools } = req.body;
+    const { name, systemPrompt, initialMessage, voiceId, language, tools } = req.body;
     
     let parsedTools = null;
     if (typeof tools === 'string') {
@@ -64,6 +65,7 @@ router.put('/:id', async (req, res) => {
         ...(systemPrompt && { systemPrompt }),
         ...(initialMessage && { initialMessage }),
         ...(voiceId !== undefined && { voiceId }),
+        ...(language !== undefined && { language }),
         ...(tools !== undefined && { tools: parsedTools }),
       }
     });

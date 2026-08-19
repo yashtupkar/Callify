@@ -32,6 +32,13 @@ export function useVoiceSession(serverUrl) {
       audioContextRef.current = null;
     }
     
+    // Stop background noise playback
+    if (window.bgAudio) {
+      window.bgAudio.pause();
+      window.bgAudio.currentTime = 0;
+      window.bgAudio = null;
+    }
+    
     setIsConnected(false);
     setIsAgentSpeaking(false);
   }, []);
@@ -51,6 +58,12 @@ export function useVoiceSession(serverUrl) {
 
       audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)();
       nextStartTimeRef.current = audioContextRef.current.currentTime;
+
+      // Play realistic background noise from an MP3 file
+      window.bgAudio = new Audio('/audios/Calm_office_ambience_noise.mp3');
+      window.bgAudio.loop = true;
+      window.bgAudio.volume = 0.1; // Set low volume for background ambiance
+      window.bgAudio.play().catch(e => console.error("Could not play background noise:", e));
 
       ws.onopen = () => {
         setIsConnected(true);

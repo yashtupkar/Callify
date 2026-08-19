@@ -12,6 +12,7 @@ model Agent {
   systemPrompt   String
   initialMessage String
   voiceId        String?
+  language       String?       @default("en-US")
   tools          Json?
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
