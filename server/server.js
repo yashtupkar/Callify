@@ -4,6 +4,7 @@ const http = require('http');
 const { WebSocketServer } = require('ws');
 const cors = require('cors');
 const { setupConnectionHandler } = require('./src/socket/connectionHandler');
+const agentRoutes = require('./src/routes/agents');
 
 const app = express();
 app.use(cors());
@@ -12,6 +13,8 @@ app.use(express.json());
 // Serve static frontend testing files from the client folder
 const path = require('path');
 app.use(express.static(path.join(__dirname, '../client')));
+
+app.use('/api', agentRoutes);
 
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', service: 'realtime-voice-service' });

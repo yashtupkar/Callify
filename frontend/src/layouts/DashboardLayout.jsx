@@ -1,5 +1,5 @@
 import React from 'react';
-import { Outlet } from 'react-router-dom';
+import { Outlet, NavLink } from 'react-router-dom';
 import { 
   Search,
   Wand2,
@@ -17,7 +17,24 @@ import {
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 
-function SidebarItem({ icon: Icon, label, active = false, shortcut = null }) {
+function SidebarItem({ icon: Icon, label, active = false, shortcut = null, to = null }) {
+  if (to) {
+    return (
+      <NavLink
+        to={to}
+        className={({ isActive }) => cn(
+          "flex items-center justify-between px-3 py-2 rounded-md cursor-pointer transition-colors text-sm",
+          "hover:bg-accent hover:text-accent-foreground text-muted-foreground",
+          isActive && "bg-accent/50 text-foreground font-medium"
+        )}
+      >
+        <div className="flex items-center gap-3">
+          <Icon size={16} />
+          <span>{label}</span>
+        </div>
+      </NavLink>
+    );
+  }
   return (
     <div className={cn(
       "flex items-center justify-between px-3 py-2 rounded-md cursor-pointer transition-colors text-sm",
@@ -68,12 +85,12 @@ export function DashboardLayout() {
         <div className="flex-1 overflow-y-auto py-2 flex flex-col gap-1 px-3">
           <div className="mt-4 mb-1">
             <p className="px-3 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Studio</p>
-            <SidebarItem icon={Wand2} label="Composer" />
+            <SidebarItem icon={Wand2} label="Composer" to="/dashboard/composer" />
           </div>
 
           <div className="mt-4 mb-1">
             <p className="px-3 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Build</p>
-            <SidebarItem icon={Users} label="Assistants" active />
+            <SidebarItem icon={Users} label="Assistants" to="/dashboard/assistants" />
             <SidebarItem icon={Wrench} label="Squads" />
             <SidebarItem icon={Wrench} label="Tools" />
             <SidebarItem icon={PhoneCall} label="Phone Numbers" />
