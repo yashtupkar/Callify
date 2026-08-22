@@ -56,6 +56,17 @@ function setupConnectionHandler(ws, req) {
               conversationManager.handleIncomingAudio(Buffer.from(msg.data, 'base64'));
             }
             break;
+          case 'text.input':
+            if (msg.text) {
+              // Optionally interrupt agent if it's speaking, though maybe handled in frontend
+              if (conversationManager.tts) {
+                conversationManager.tts.interrupt();
+              }
+              conversationManager.handleUserUtterance(msg.text);
+              // Send the message back to client so it gets displayed
+              conversationManager.sendToClient({ event: 'transcript', data: { text: msg.text, isFinal: true, speaker: 'user' } });
+            }
+            break;
           case 'session.ended':
             console.log('[ConnectionHandler] session.ended received.');
             conversationManager.endConversation();

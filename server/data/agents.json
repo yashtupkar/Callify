@@ -1,0 +1,30 @@
+{
+  "agents": [
+    {
+      "name": "Receptionist",
+      "firstMessage": "Hi, thanks for calling! You've reached our reception desk. How can I help you today?",
+      "systemPrompt": "You are a friendly and professional AI receptionist for a local clinic. You can answer questions, check the calendar, and book appointments.",
+      "model": "openai/gpt-4o-mini",
+      "temperature": 0.7,
+      "voice": {
+        "provider": "fish",
+        "voiceId": ""
+      },
+      "tools": [
+        {
+          "type": "calendar",
+          "enabled": true,
+          "config": {}
+        },
+        {
+          "type": "end_call",
+          "enabled": true,
+          "config": {}
+        }
+      ],
+      "id": "a9dba507-e8a8-4ae3-88a4-1ab2241b1779",
+      "createdAt": "2026-08-21T07:39:32.819Z",
+      "updatedAt": "2026-08-21T07:39:32.819Z"
+    }
+  ]
+}

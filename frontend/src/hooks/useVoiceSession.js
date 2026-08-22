@@ -183,6 +183,15 @@ export function useVoiceSession(serverUrl) {
     nextStartTimeRef.current = startTime + audioBuffer.duration;
   };
 
+  const sendTextMessage = useCallback((text) => {
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({
+        type: 'text.input',
+        text: text
+      }));
+    }
+  }, []);
+
   return {
     isConnected,
     isAgentSpeaking,
@@ -190,6 +199,7 @@ export function useVoiceSession(serverUrl) {
     usage,
     cost,
     startSession,
-    endSession
+    endSession,
+    sendTextMessage
   };
 }

@@ -100,12 +100,12 @@ class LLMService extends LLMProvider {
       // Emit the last tool call if exists
       if (currentToolCall) {
         try {
-          const args = JSON.parse(toolCallArgs);
-          this.emit('tool_call', currentToolCall.name, args);
-          // Return early if tool call is made, because we don't emit reply_complete yet
+          const args = toolCallArgs.trim() ? JSON.parse(toolCallArgs) : {};
+          // Pass the preamble (fullReply) and the tool call ID to the tool_call event!
+          this.emit('tool_call', currentToolCall.name, args, fullReply, currentToolCall.id);
           return;
         } catch(e) {
-          console.error("Error parsing tool call arguments", e);
+          console.error("Error parsing tool call arguments", e, toolCallArgs);
         }
       }
 

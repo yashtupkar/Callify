@@ -515,8 +515,13 @@ HANDLING INTERRUPTIONS
 
 STAYING HUMAN
 - Don't say you're an AI, a bot, or a language model unless directly and explicitly asked.
-- Don't narrate your own actions ("I will now check the schedule for you") — just do it in conversation ("let me take a quick look...").
 - Avoid scripted-sounding customer-service phrases ("I appreciate your patience", "please hold while I process your request").
+
+TOOL CALLING (CRITICAL)
+- NEVER generate conversational filler like "Let me check for you" or "One moment please...". 
+- NEVER simulate a pause using "...". 
+- When you need to check the calendar or save data, YOU MUST OUTPUT ONLY THE TOOL CALL AND ABSOLUTELY NO TEXT. 
+- If you output text instead of a tool call, you will be penalized. Just call the tool silently! Our backend system will handle playing the audio filler for the user while they wait.
 `.trim();
 
 // A few natural variants per situation so the same line isn't replayed on every call.
@@ -687,10 +692,15 @@ class ConversationManager extends EventEmitter {
       console.error('[ConversationManager] LLM Error:', err);
     });
 
-    this.llm.on('tool_call', (toolName, args) => {
+    this.llm.on('tool_call', (toolName, args, preamble, llmToolCallId) => {
       console.log(`[ConversationManager] Tool called: ${toolName}`, args);
       this.usageTracker.incrementToolCall();
       
+      // 1. If there's a preamble, send it to the UI so the user sees what the AI said!
+      if (preamble && preamble.trim()) {
+        this.sendToClient({ event: 'transcript', data: { text: preamble.trim(), isFinal: true, speaker: 'agent' } });
+      }
+
       if (toolName === 'end_call') {
         setTimeout(() => {
           this.sendToClient({ event: 'stop' });
@@ -699,18 +709,22 @@ class ConversationManager extends EventEmitter {
         return;
       }
       
+      const actualToolCallId = llmToolCallId || ("call_" + Math.random().toString(36).substring(7));
+      
       if (toolName === 'save_collected_data') {
         console.log(`[ConversationManager] Data successfully collected:`, args);
         
-        // Filler Phrase for Masking Latency (varied, not the same line every call)
-        this.tts.feedText(pickFiller('save_collected_data'));
+        // Filler Phrase for Masking Latency
+        const filler = pickFiller('save_collected_data');
+        this.tts.feedText(filler);
         this.tts.flush();
+        this.sendToClient({ event: 'transcript', data: { text: filler, isFinal: true, speaker: 'agent' } });
         
         this.transcript.push({
           role: 'assistant',
-          content: null,
+          content: preamble || null,
           tool_calls: [{
-            id: "call_" + Math.random().toString(36).substring(7),
+            id: actualToolCallId,
             type: "function",
             function: { name: toolName, arguments: JSON.stringify(args) }
           }]
@@ -718,7 +732,7 @@ class ConversationManager extends EventEmitter {
         
         this.transcript.push({
           role: 'tool',
-          tool_call_id: this.transcript[this.transcript.length - 1].tool_calls[0].id,
+          tool_call_id: actualToolCallId,
           name: toolName,
           content: JSON.stringify({ success: true, message: "Data saved successfully. You may now proceed with the user's primary request." })
         });
@@ -731,13 +745,18 @@ class ConversationManager extends EventEmitter {
       const isBuiltIn = dentalTools.some(t => t.function.name === toolName);
       
       if (isBuiltIn) {
-        // Filler Phrases for Built-in Dental Tools (varied)
+        // Filler Phrases for Built-in Dental Tools
+        let filler = "";
         if (toolName === 'check_availability') {
-          this.tts.feedText(pickFiller('check_availability'));
-          this.tts.flush();
+          filler = pickFiller('check_availability');
         } else if (toolName === 'book_appointment') {
-          this.tts.feedText(pickFiller('book_appointment'));
+          filler = pickFiller('book_appointment');
+        }
+        
+        if (filler) {
+          this.tts.feedText(filler);
           this.tts.flush();
+          this.sendToClient({ event: 'transcript', data: { text: filler, isFinal: true, speaker: 'agent' } });
         }
 
         const result = executeDentalTool(toolName, args);
@@ -745,9 +764,9 @@ class ConversationManager extends EventEmitter {
         // Add tool message to transcript
         this.transcript.push({
           role: 'assistant',
-          content: null,
+          content: preamble || null,
           tool_calls: [{
-            id: "call_" + Math.random().toString(36).substring(7),
+            id: actualToolCallId,
             type: "function",
             function: { name: toolName, arguments: JSON.stringify(args) }
           }]
@@ -755,7 +774,7 @@ class ConversationManager extends EventEmitter {
         
         this.transcript.push({
           role: 'tool',
-          tool_call_id: this.transcript[this.transcript.length - 1].tool_calls[0].id,
+          tool_call_id: actualToolCallId,
           name: toolName,
           content: JSON.stringify(result)
         });
@@ -767,14 +786,16 @@ class ConversationManager extends EventEmitter {
         console.log(`[ConversationManager] Routing custom tool ${toolName} to frontend.`);
         
         // Generic filler phrase for custom tools (varied)
-        this.tts.feedText(pickFiller('generic'));
+        const filler = pickFiller('generic');
+        this.tts.feedText(filler);
         this.tts.flush();
+        this.sendToClient({ event: 'transcript', data: { text: filler, isFinal: true, speaker: 'agent' } });
         
         this.transcript.push({
           role: 'assistant',
-          content: null,
+          content: preamble || null,
           tool_calls: [{
-            id: "call_" + Math.random().toString(36).substring(7),
+            id: actualToolCallId,
             type: "function",
             function: { name: toolName, arguments: JSON.stringify(args) }
           }]
@@ -784,7 +805,7 @@ class ConversationManager extends EventEmitter {
           event: 'tool_execution_request',
           toolName: toolName,
           args: args,
-          toolCallId: this.transcript[this.transcript.length - 1].tool_calls[0].id
+          toolCallId: actualToolCallId
         });
       }
     });
@@ -848,17 +869,20 @@ class ConversationManager extends EventEmitter {
     if (config.dataToCollect && config.dataToCollect.length > 0) {
       fullPrompt += `\n\n---\n\nCOLLECTING INFO\nBefore you can help with their main request, you need to naturally collect: ${config.dataToCollect.join(', ')}.
 - Ask for one field at a time, woven into the conversation — not like a form.
-- When they give you a detail, reflect it back briefly to confirm ("got it, yash@gmail.com — that right?"). Don't spell it out letter by letter unless they ask you to.
-- Once they've confirmed a field, move to the next one.
-- The moment all fields are collected and confirmed, call the 'save_collected_data' tool — don't announce that you're "saving data", just do it.
-- Don't fulfill their original request or call any other tool until 'save_collected_data' has succeeded.`;
+- You MUST collect and confirm ALL required fields first.
+- Only when you have collected ALL required fields, make a SINGLE call to 'save_collected_data' containing all the data at once. Do NOT call it separately for each field.
+- You may use lookup tools (like checking availability) during the conversation, but you MUST successfully call 'save_collected_data' with all data before taking final actions (like booking an appointment or fulfilling their primary request).
+
+CRITICAL ANTI-HALLUCINATION RULES:
+- NEVER guess or hallucinate if a time slot is available. You MUST call the 'check_availability' tool to find out.
+- If you have not called the tool yet, you DO NOT know the answer. Do not pretend you checked.`;
       
       // Inject the built-in data collection tool
       this.customTools.push({
         type: "function",
         function: {
           name: "save_collected_data",
-          description: "Save the user's data after collecting and confirming it.",
+          description: "Save the user's data after collecting and confirming all fields. Call this exactly ONCE with all fields.",
           parameters: {
             type: "object",
             properties: {
@@ -870,6 +894,8 @@ class ConversationManager extends EventEmitter {
         }
       });
     }
+
+    fullPrompt += `\n\n---\n\nCLOSING THE CALL\nOnce the user's primary request (like booking an appointment) is successfully completed, you MUST ask if there is anything else you can help them with. If they say no or indicate they are done, make a polite final response and call the 'end_call' tool IN THE SAME TURN. Do NOT wait for the user to reply to your goodbye message before calling the tool!`;
 
     this.llm.initialize(fullPrompt);
     this.stt.connect(provider, language).catch(e => console.error('[ConversationManager] STT connect error:', e));
@@ -943,7 +969,7 @@ class ConversationManager extends EventEmitter {
         type: "function",
         function: {
           name: "end_call",
-          description: "Ends the current call. ONLY call this tool AFTER you have explicitly said a polite goodbye."
+          description: "Ends the current call. You MUST call this tool simultaneously with your final goodbye message. Do not wait for the user to reply to your goodbye."
         }
       }
     ];
