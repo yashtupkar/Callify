@@ -1,0 +1,713 @@
+#1 save data call in loop fix that :
+[ToolExecutor] Tool called: save_collected_data {
+  name: 'yash',
+  phone: '7898297769',
+  appointment_reason: 'checkup',
+  time: '2 PM',
+  date: 'August 23rd'
+}
+[ToolExecutor] Data successfully collected: {
+  name: 'yash',
+  phone: '7898297769',
+  appointment_reason: 'checkup',
+  time: '2 PM',
+  date: 'August 23rd'
+}
+[ToolExecutor] Tool called: save_collected_data {
+  name: 'yash',
+  phone: '7898297769',
+  appointment_reason: 'checkup',
+  time: '2 PM',
+  date: 'August 23rd'
+}
+[ToolExecutor] Data successfully collected: {
+  name: 'yash',
+  phone: '7898297769',
+  appointment_reason: 'checkup',
+  time: '2 PM',
+  date: 'August 23rd'
+}
+
+
+#2 Test the tool integration how that works?
+
+
+Plan: # Callify → Multi-Tenant AI Voice Agent Platform
+## Architecture Audit & Migration Plan
+
+---
+
+## 1. Current Architecture
+
+### How a Call Flows Today
+
+```
+[Telnyx Telephony]
+       │
+       ▼
+POST /api/telnyx/webhook
+  → Returns TeXML with Stream url="wss://{host}/telnyx-media?to={calledNumber}"
+       │
+       ▼
+WebSocket: /telnyx-media?to={phoneNumber}
+  → telnyxConnectionHandler.js
+  → Looks up phoneNumber in DB → finds Agent (if any)
+  → Uses Agent.systemPrompt or hardcoded fallback
+  → Creates ConversationManager(TelnyxChannelAdapter)
+       │
+[Browser WebSocket]
+WebSocket: /
+  → connectionHandler.js
+  → Receives session.start { config } from frontend
+  → Creates ConversationManager(BrowserChannelAdapter)
+       │
+       ▼
+ConversationManager.startConversation(config)
+  ├─ STT: STTService → Deepgram WebSocket (nova-2)
+  ├─ LLM: LLMService → OpenRouter/OpenAI (GPT-4o-mini default)
+  ├─ TTS: FishAudioTTSProvider or ElevenLabsTTSProvider
+  └─ ToolExecutor + ToolRegistry (DISCONNECTED — see problem #4)
+
+Audio In → STT → transcript → LLM → tokens → TTS → Audio Out
+                               │
+                        tool_call events
+                               │
+                    ToolExecutor.handle()
+                          ├─ end_call
+                          ├─ save_collected_data
+                          ├─ built-in tools (registry)
+                          └─ custom tools → frontend
+```
+
+### Call-Flow Step by Step
+
+1. **Telephony Entry**: Telnyx POSTs to `/api/telnyx/webhook` → server returns TeXML streaming URL with `?to=<calledNumber>`
+2. **Phone Number Lookup**: `telnyxConnectionHandler` queries DB: `PhoneNumber.findUnique({ where: { phoneNumber: to }, include: { Agent } })`
+3. **Agent Config Load**: If found → uses `Agent.systemPrompt + Agent.voiceId`. If not → uses hardcoded fallback
+4. **Prompt Assembly**: `CORE_VOICE_PERSONA + rolePrompt + date context + language + dataToCollect + closing rules`
+5. **STT**: Deepgram WebSocket streaming (nova-2). Interim + final results. 500ms silence timeout triggers end-of-turn
+6. **LLM**: OpenRouter (OpenAI-compatible). Streaming. Tool calls extracted from stream. Token usage tracked
+7. **Tool Execution**: ToolExecutor handles `end_call`, `save_collected_data`, built-ins (via registry), or forwards custom tools to frontend
+8. **TTS**: FishAudio (sentence-boundary batching) or ElevenLabs (WebSocket streaming). Raw PCM out
+9. **Audio Return**: Channel adapter converts PCM → mu-law (Telnyx) or base64 PCM (browser)
+10. **Session End**: DB saves CallSession with costs + transcript
+
+---
+
+## 2. Full File Inventory
+
+### Server
+
+| File | Status | Notes |
+|------|--------|-------|
+| `server.js` | ✅ Keep | Express + WS bootstrap |
+| `src/channels/ChannelAdapter.js` | ✅ Keep | Abstract base class |
+| `src/channels/BrowserChannelAdapter.js` | ✅ Keep | Browser WS |
+| `src/channels/TelnyxChannelAdapter.js` | ✅ Keep | Telnyx mu-law audio |
+| `src/socket/connectionHandler.js` | ✅ Keep | Browser WS session handler |
+| `src/socket/telnyxConnectionHandler.js` | 🔧 Refactor | Agent lookup needs generalization |
+| `src/integrations/ProviderInterfaces.js` | ✅ Keep | Abstract interfaces |
+| `src/integrations/llm/llmService.js` | ✅ Keep | Fully generic |
+| `src/integrations/llm/dentalTools.js` | ⚠️ Migrate | Mock in-memory dental data, hardcoded |
+| `src/integrations/stt/sttService.js` | ✅ Keep | Fully generic |
+| `src/integrations/tts/ttsProvider.js` | ✅ Keep | ElevenLabs TTS |
+| `src/integrations/tts/fishAudioTtsProvider.js` | ✅ Keep | Fish Audio TTS |
+| `src/integrations/tts/sarvamTtsProvider.js` | ✅ Keep | Hindi TTS |
+| `src/integrations/tts/ttsCache.js` | ✅ Keep | Greeting cache |
+| `src/services/ConversationManager.js` | 🔧 Major refactor | 1067 lines; first 477 are dead commented-out code; hardcodes dentalTools; doesn't use ToolRegistry |
+| `src/services/DatabaseService.js` | ✅ Keep | Generic; needs new models |
+| `src/services/UsageTracker.js` | ✅ Keep | Generic |
+| `src/services/CostCalculator.js` | ✅ Keep | Generic |
+| `src/services/agentStore.js` | 🗑️ Delete | Dead code — JSON file store superseded by Prisma DB, never imported |
+| `src/tools/ToolRegistry.js` | ✅ Keep | Generic, good architecture |
+| `src/tools/ToolExecutor.js` | ✅ Keep | Fully generic |
+| `src/routes/agents.js` | 🔧 Extend | Basic CRUD, no workspace isolation |
+| `src/routes/phoneNumbers.js` | 🔧 Extend | Basic CRUD, no workspace isolation |
+| `src/utils/protocol.js` | ✅ Keep | WS payload validation |
+| `src/utils/logger.js` | 🔧 Extend | Stub, needs structured logging |
+| `prisma/schema.prisma` | 🔧 Extend | No Workspace, no auth, flat schema |
+| `test_fish.js`, `test_sarvam*.js`, `test_tts*.js` | 🗑️ Delete/move | Root-level test scripts |
+
+### Frontend
+
+| File | Status | Notes |
+|------|--------|-------|
+| `frontend/src/App.jsx` | 🔧 Major refactor | 748-line monolith; hardcoded "Dental Receptionist" default |
+| `frontend/src/hooks/useVoiceSession.js` | ✅ Keep | Generic WS audio/transcript hook |
+| `frontend/src/components/ui/*` | ✅ Keep | shadcn/ui components |
+
+---
+
+## 3. Hardcoded Components — Exact Locations
+
+### 3.1 Frontend: Dental defaults in initial state
+
+**File**: [`App.jsx` L26-L34](file:///d:/Callify/frontend/src/App.jsx#L26-L34)
+```js
+name: "Dental Receptionist",   // HARDCODED
+systemPrompt: "You are a highly capable... dental clinic receptionist...",  // HARDCODED
+dataToCollect: ["Name", "Email", "Phone"],  // HARDCODED
+initialMessage: "Hi, thanks for calling! You've reached our reception desk..."  // HARDCODED
+```
+
+### 3.2 ConversationManager: Always injects dental tools
+
+**File**: [`ConversationManager.js` L964-L975](file:///d:/Callify/server/src/services/ConversationManager.js#L964-L975)
+```js
+getAllTools() {
+  return [
+    ...dentalTools,  // ALWAYS INJECTED regardless of agent type
+    ...this.customTools,
+    { type: "function", function: { name: "end_call" } }
+  ];
+}
+```
+
+### 3.3 ConversationManager: Hardcoded dental fallback prompt
+
+**File**: [`ConversationManager.js` L853-L855](file:///d:/Callify/server/src/services/ConversationManager.js#L853-L855)
+```js
+: "You are a friendly and professional dental clinic receptionist..."  // HARDCODED FALLBACK
+```
+
+### 3.4 ConversationManager: Hardcoded save_collected_data schema
+
+**File**: [`ConversationManager.js` L880-L895](file:///d:/Callify/server/src/services/ConversationManager.js#L880-L895)
+```js
+// Properties always hardcoded as name/email/phone regardless of agent config
+name: { type: "string" },
+email: { type: "string" },
+phone: { type: "string" }
+// Note: ToolRegistry.injectDataCollectionTool() already solves this generically
+// but ConversationManager doesn't use ToolRegistry at all
+```
+
+### 3.5 TelnyxConnectionHandler: Hardcoded fallback config
+
+**File**: [`telnyxConnectionHandler.js` L21-L24](file:///d:/Callify/server/src/socket/telnyxConnectionHandler.js#L21-L24)
+```js
+let config = {
+  systemPrompt: "You are a helpful AI assistant for a business...",
+  voice: "alloy"  // HARDCODED
+};
+```
+
+### 3.6 Database schema: No multi-tenancy
+
+**File**: [`schema.prisma`](file:///d:/Callify/server/prisma/schema.prisma)
+- `Agent` has no `workspaceId`, `userId`, `status`, `goals`, `rules`, `dataCollection`
+- `CallSession` has no link to `agentId` or `workspaceId`
+- `tools` field is an opaque `Json` blob containing both `dataToCollect` and `customTools`
+
+### 3.7 Dead Code: 477 commented-out lines
+
+**File**: [`ConversationManager.js` L1-L477](file:///d:/Callify/server/src/services/ConversationManager.js#L1-L477)
+- Entire first class definition is commented out (old version)
+- Active code starts at line 480
+- Major maintenance and confusion burden
+
+### 3.8 Dead Code: agentStore.js
+
+**File**: [`agentStore.js`](file:///d:/Callify/server/src/services/agentStore.js)
+- JSON file-based agent store, superseded by Prisma
+- Never imported anywhere in active code
+- Contains hardcoded dental `DEFAULT_AGENT`
+
+---
+
+## 4. Reusable Generic Components
+
+These are fully generic and will remain unchanged:
+
+| Component | Reason |
+|-----------|--------|
+| `ChannelAdapter` + both adapters | Pure audio/protocol abstraction |
+| `STTService` | Fully parameterized, Deepgram |
+| `LLMService` | OpenAI-compatible, model from env, prompt from caller |
+| All TTS providers | Provider-agnostic interfaces |
+| `ttsCache` | Pure key-based cache |
+| `ToolRegistry` | Already generic — has `registerBuiltIn`, `registerCustom`, dynamic `save_collected_data` |
+| `ToolExecutor` | Fully generic tool dispatch |
+| `UsageTracker` + `CostCalculator` | Generic |
+| `protocol.js` | Generic WS validation |
+| `useVoiceSession.js` | Generic browser WS hook |
+
+---
+
+## 5. Problems Identified
+
+> [!WARNING]
+> **No authentication on any API route.** Anyone can list, create, update, or delete agents. Critical gap for a multi-tenant platform.
+
+> [!WARNING]
+> **No workspace isolation.** Agents, phone numbers, and call sessions are globally shared with no ownership concept.
+
+> [!CAUTION]
+> **ToolRegistry and ToolExecutor exist but are NOT wired into ConversationManager.** The registry/executor were built as the better architecture but ConversationManager uses its own inline tool handling and hardcoded dentalTools instead. This is the most critical architectural disconnect.
+
+> [!NOTE]
+> **ConversationManager is a God Object** — 1067 lines (477 dead). It builds prompts, manages state, handles tools, manages TTS/STT/LLM lifecycle, and saves to DB. Needs decomposition.
+
+> [!NOTE]
+> **CallSession has no agentId** — impossible to query calls by agent for analytics.
+
+> [!NOTE]
+> **The `.env` file contains keys from a different project (PlaceMateAI)** — Razorpay, AWS, JDOODLE, Cloudinary, LiveKit, Brevo, etc. Only Callify-relevant keys should be in this file.
+
+---
+
+## 6. Proposed New Architecture
+
+```
+CALLIFY PLATFORM
+        │
+        ▼
+API Layer (Express)
+  /api/agents  /api/phone-numbers  /api/templates  /api/calls
+  Middleware: Auth (Clerk JWT) + Workspace isolation
+        │
+        ▼
+Database (Prisma/Postgres)
+  Workspace → Agent → PhoneNumber
+  Agent → CallSession
+        │
+        ▼
+Agent Runtime Loader
+  Incoming Call → PhoneNumber → Agent
+  Loads config ONCE per call
+  Builds ToolRegistry dynamically for this agent
+        │
+        ▼
+Dynamic Prompt Builder
+  CORE_VOICE_PERSONA
+  + Agent Identity + Goals + Instructions + Behavior + Rules
+  + Data Collection Schema + Temporal Context + Tool List
+        │
+        ▼
+ConversationManager (Pure orchestrator)
+  NO business logic, NO hardcoded tools
+  STT → transcript → LLM → TTS → Audio
+  Delegates ALL tool calls to ToolExecutor
+```
+
+---
+
+## 7. Migration Phases
+
+> [!IMPORTANT]
+> The existing dental receptionist agent MUST remain functional throughout all phases. Each phase is independently deployable. No big-bang rewrites.
+
+### Phase A — Delete Dead Code
+**Risk: None | Time: ~1h**
+
+1. Remove lines 1–477 of `ConversationManager.js` (commented-out old class)
+2. Delete `agentStore.js` (never imported, dead)
+3. Move `test_fish.js`, `test_sarvam*.js`, `test_tts*.js` to `server/test/`
+
+Files changed: `ConversationManager.js`, deleted `agentStore.js`
+
+---
+
+### Phase B — Wire ToolRegistry into ConversationManager
+**Risk: Low | Time: ~3h**
+
+ConversationManager currently bypasses ToolRegistry entirely — it has inline tool handling and hardcodes dentalTools. This phase wires them correctly.
+
+1. Replace inline `tool_call` listener with `this.toolExecutor.handle(toolName, args, preamble, toolCallId)`
+2. Replace inline `save_collected_data` tool injection with `this.registry.injectDataCollectionTool(fields)`
+3. Replace `getAllTools()` with `this.registry.getAllSchemas()`
+4. Register dental tools conditionally in registry (only when agent config indicates dental use case)
+
+Backward compatible: existing dental agent still works exactly the same.
+
+---
+
+### Phase C — Database Schema Extension (Additive Only)
+**Risk: Medium | Time: ~4h**
+
+Extend Prisma schema. All changes are additive — no columns dropped.
+
+```prisma
+model Workspace {
+  id           String       @id @default(uuid())
+  name         String
+  ownerId      String       // Clerk userId
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  agents       Agent[]
+  phoneNumbers PhoneNumber[]
+}
+
+model Agent {
+  id             String      @id @default(uuid())
+  workspaceId    String?     // nullable for migration compat
+  workspace      Workspace?  @relation(fields: [workspaceId], references: [id])
+  name           String
+  description    String?
+  status         String      @default("active")
+  role           String?
+  companyName    String?
+  introduction   String?
+  tone           String?
+  responseLength String?     @default("short")
+  languages      Json?       @default("[\"en-US\"]")
+
+  // Kept for backward compat:
+  systemPrompt   String?     @default("")
+  initialMessage String?     @default("Hello! How can I help you?")
+  voiceId        String?
+  language       String?     @default("en-US")
+  tools          Json?
+
+  // New structured config:
+  goals          Json?       @default("[]")
+  instructions   String?
+  rules          Json?       @default("[]")
+  dataCollection Json?       @default("[]")
+  agentTools     Json?       @default("[]")
+  voice          Json?       @default("{}")
+  templateId     String?
+
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+  phoneNumbers   PhoneNumber[]
+  callSessions   CallSession[]
+
+  @@index([workspaceId])
+}
+
+model PhoneNumber {
+  id          String     @id
+  phoneNumber String     @unique
+  workspaceId String?
+  workspace   Workspace? @relation(fields: [workspaceId], references: [id])
+  agentId     String?
+  agent       Agent?     @relation(fields: [agentId], references: [id])
+  provider    String     @default("telnyx")
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  @@index([workspaceId])
+}
+
+model CallSession {
+  id                  String    @id @default(uuid())
+  workspaceId         String?
+  agentId             String?
+  agent               Agent?    @relation(fields: [agentId], references: [id])
+  createdAt           DateTime  @default(now())
+  endedAt             DateTime?
+  provider            String    @default("browser_websocket")
+  callerNumber        String?
+  calledNumber        String?
+  sttCost             Float     @default(0.0)
+  llmCost             Float     @default(0.0)
+  ttsCost             Float     @default(0.0)
+  totalCost           Float     @default(0.0)
+  sttDurationSeconds  Int       @default(0)
+  llmPromptTokens     Int       @default(0)
+  llmCompletionTokens Int       @default(0)
+  ttsCharacters       Int       @default(0)
+  toolCalls           Int       @default(0)
+  transcript          Json?
+  collectedData       Json?
+
+  @@index([workspaceId])
+  @@index([agentId])
+}
+
+model AgentTemplate {
+  id          String   @id @default(uuid())
+  slug        String   @unique
+  name        String
+  description String?
+  category    String?
+  config      Json
+  isBuiltIn   Boolean  @default(true)
+  createdAt   DateTime @default(now())
+}
+```
+
+---
+
+### Phase D — Dynamic Prompt Builder Service
+**Risk: Low | Time: ~3h**
+
+New file: `server/src/modules/prompt/promptBuilder.js`
+
+```js
+// Composable sections — each returns a string or null
+function buildAgentPrompt({ agent, tools, timezone }) {
+  const sections = [
+    buildVoicePersonaSection(),       // CORE_VOICE_PERSONA (unchanged text)
+    buildIdentitySection(agent),       // WHO the agent is
+    buildGoalsSection(agent),          // WHAT it's here to do
+    buildInstructionsSection(agent),   // Custom operator instructions
+    buildBehaviorSection(agent),       // Tone, language, response style
+    buildRulesSection(agent),          // Safety & business rules
+    buildDataCollectionSection(agent), // What data to collect
+    buildTemporalContextSection(timezone),
+    buildToolUsageSection(tools),
+    buildClosingSection(),
+  ];
+  return sections.filter(Boolean).join('\n\n---\n\n');
+}
+```
+
+CORE_VOICE_PERSONA text is preserved verbatim — just moved to `buildVoicePersonaSection()`.
+
+---
+
+### Phase E — Agent Runtime Loader
+**Risk: Low | Time: ~2h**
+
+New file: `server/src/modules/agent/agentRuntime.js`
+
+```js
+async function loadAgentRuntime(agentId) {
+  const agent = await db.agent.findUnique({ where: { id: agentId } });
+  if (!agent) throw new Error(`Agent ${agentId} not found`);
+
+  const registry = new ToolRegistry();
+
+  // Register tools based on agent.agentTools config
+  for (const tool of (agent.agentTools || [])) {
+    if (tool.type === 'webhook') registerWebhookTool(registry, tool);
+    // future: calendar, CRM, etc.
+  }
+
+  // Dynamic data collection schema
+  if (agent.dataCollection?.length > 0) {
+    registry.injectDataCollectionTool(
+      agent.dataCollection.map(f => f.label)
+    );
+  }
+
+  const systemPrompt = buildAgentPrompt({ agent, tools: registry.getAllSchemas() });
+
+  return { agent, registry, systemPrompt };
+}
+```
+
+---
+
+### Phase F — Generalize TelnyxConnectionHandler
+**Risk: None | Time: ~1h**
+
+```js
+// Before:
+config = { systemPrompt: dbPhone.Agent.systemPrompt, voice: dbPhone.Agent.voiceId || "alloy" }
+await conversationManager.startConversation(config, 'telnyx')
+
+// After:
+const { agent, registry, systemPrompt } = await loadAgentRuntime(dbPhone.Agent.id);
+await conversationManager.startConversation({
+  systemPrompt,
+  firstMessage: agent.initialMessage,
+  voiceId: agent.voiceId,
+  language: agent.language,
+}, registry, 'telnyx')
+```
+
+---
+
+### Phase G — API Routes + Auth + Workspace Isolation
+**Risk: Medium | Time: ~4h**
+
+1. Add Clerk JWT middleware (`requireAuth`) to all `/api/*` routes
+2. `ensureWorkspace` middleware: auto-create workspace on first request per user
+3. Scope all queries by `workspaceId` from authenticated user
+4. Add missing routes: `GET /api/agents/:id`, `GET /api/agents/:id/calls`, `GET /api/templates`
+5. Audit and fix all N+1 queries and missing authorization checks
+
+---
+
+### Phase H — Agent Templates
+**Risk: None | Time: ~2h**
+
+Seed `AgentTemplate` table:
+
+| Slug | Name | Category |
+|------|------|----------|
+| `receptionist` | Receptionist | Healthcare |
+| `appointment-booking` | Appointment Booking | General |
+| `restaurant-reservation` | Restaurant Reservation | Hospitality |
+| `lead-qualification` | Lead Qualification | Sales |
+| `sales-agent` | Sales Agent | Sales |
+| `customer-support` | Customer Support | Support |
+| `real-estate` | Real Estate Agent | Real Estate |
+| `blank` | Custom Agent | General |
+
+---
+
+### Phase I — Frontend Refactor
+**Risk: Medium | Time: ~8h**
+
+Break App.jsx (748 lines) into modular pages + components. Remove all hardcoded dental defaults.
+
+```
+src/
+  pages/
+    AgentsPage.jsx          ← Agent list + new agent CTA
+    AgentDetailPage.jsx     ← Tabbed detail (General, Instructions, Data, Tools, Voice, Phones, Test)
+    TemplatesPage.jsx       ← Template gallery to start agent creation
+  components/
+    agent/
+      AgentSidebar.jsx
+      tabs/
+        GeneralTab.jsx
+        InstructionsTab.jsx
+        DataCollectionTab.jsx
+        ToolsTab.jsx
+        VoiceTab.jsx
+        PhoneNumbersTab.jsx
+        TestTab.jsx           ← Shows state inspector: collected data, tool calls, errors
+```
+
+---
+
+## 8. Open Questions for You
+
+> [!IMPORTANT]
+> **Auth**: The `.env` already has Clerk keys. Should I wire Clerk JWT middleware into the API routes now, or keep routes open (no auth) for the initial build?
+
+> [!IMPORTANT]
+> **Dental tools**: `dentalTools.js` uses mock in-memory data (not real calendar). Should I keep it as a conditionally-registered demo tool, or remove it entirely now that we have the generic custom tool system?
+
+> [!IMPORTANT]
+> **Existing DB agents**: Existing agents in Supabase have no `workspaceId`. Should I create a "Default Workspace" migration and assign them to it, or treat existing agents as an orphan set?
+
+> [!IMPORTANT]
+> **Knowledge Base**: No knowledge base exists yet. Should I scope it into this migration, or plan it as Phase II after the platform is stable?
+
+> [!NOTE]
+> **Conversation State Engine**: Currently state is implicit in the LLM transcript array. Should we build a dedicated backend state engine (as described in Phase 5 of your brief), or rely on the LLM's conversation history for now?
+
+---
+
+## 9. Phase Timeline Summary
+
+| Phase | What | Risk | Est. Time |
+|-------|------|------|-----------|
+| A | Delete dead code | None | 1h |
+| B | Wire ToolRegistry into ConversationManager | Low | 3h |
+| C | Prisma schema extension (additive) | Medium | 4h |
+| D | PromptBuilder service | Low | 3h |
+| E | Agent Runtime Loader | Low | 2h |
+| F | Generalize TelnyxConnectionHandler | None | 1h |
+| G | API routes + auth + workspace | Medium | 4h |
+| H | Agent templates seed | None | 2h |
+| I | Frontend refactor | Medium | 8h |
+| **Total** | | | **~28h** |
+
+The existing dental receptionist agent will remain fully functional throughout every phase.
+
+
+
+# Callify — Next Steps
+
+## What's Done ✅
+| Phase | What |
+|-------|------|
+| A | Dead code deleted |
+| B | ToolRegistry + ToolExecutor wired into ConversationManager |
+| C | Prisma schema — Workspace, Agent, CallSession with multi-tenancy |
+| D | Dynamic PromptBuilder module |
+| E | Agent Runtime Loader |
+| F | Telnyx handler generalized via agentRuntime |
+| — | Dental tools removed |
+| — | `end_call` fixed — waits for TTS to finish before hanging up |
+| — | Date resolution fixed — AI says "Friday, August 22nd" not "today" |
+
+---
+
+## Recommended Next Steps (Priority Order)
+
+### 🔴 1. Webhook Tool Executor — Cal.com, Google Sheets, Zapier
+**Why first:** The tools panel exists in the UI but custom tools currently only route to frontend. Users need server-side webhook execution so agents can *actually* book appointments, write to sheets, etc.
+
+**What it does:**
+- Agent tool config gets a new `type` field: `"webhook"` | `"frontend"`
+- When `type === "webhook"`, the server calls the URL directly using the agent's stored config
+- Frontend tools stay as-is for custom JS handlers
+
+**New fields in agent tool config:**
+```json
+{
+  "name": "book_appointment",
+  "description": "Books an appointment on Cal.com",
+  "type": "webhook",
+  "webhookUrl": "https://api.cal.com/v1/bookings",
+  "method": "POST",
+  "headers": { "Authorization": "Bearer {CAL_API_KEY}" },
+  "parameters": [...]
+}
+```
+
+**Files to create/edit:**
+- `server/src/tools/WebhookToolExecutor.js` — new
+- `server/src/tools/ToolExecutor.js` — add webhook branch
+- `frontend/src/components/agent/AgentConfig.jsx` — add webhook fields to tool builder
+
+---
+
+### 🟠 2. Phase G — API Routes + Workspace Isolation
+**Why:** Right now any client can CRUD any agent. Safe enough for single-user dev, but needed for the platform.
+
+**What to build:**
+- `GET /api/workspace` — return current user's workspace (or create it)
+- Scope all `/api/agents`, `/api/phonenumbers` queries by `workspaceId`
+- Wire `workspaceId` into `CallSession` saves
+- No Clerk auth yet — use a simple `X-Workspace-Id` header for now (auth can come later)
+
+**Files to edit:**
+- `server/src/routes/agents.js`
+- `server/src/routes/phoneNumbers.js`
+- Add `server/src/routes/workspace.js`
+- `server/src/services/DatabaseService.js` — add session workspace+agent tracking
+
+---
+
+### 🟡 3. Phase H — Agent Templates
+**Why:** Makes "Create new agent" actually useful — users pick a template instead of starting blank.
+
+**Templates to seed:**
+- `dental-receptionist`, `restaurant-reservation`, `lead-qualifier`, `customer-support`, `hotel-booking`, `blank`
+
+Each template pre-fills: `systemPrompt`, `initialMessage`, `dataToCollect`, and sample custom tools.
+
+**Frontend:**
+- `TemplatesPage.jsx` — a gallery shown when user clicks "New Agent"
+- Clicking a template creates the agent pre-configured, then opens the Studio
+
+---
+
+### 🟢 4. Frontend — Tools Tab Improvements
+**What's missing in current `AgentConfig`:**
+- Tool type selector: `Frontend (JS)` vs `Webhook (HTTP)` 
+- Webhook fields: URL, method, auth header
+- Tool test button — run the webhook directly from UI
+- Cal.com / Google Sheets **quick-connect** presets (pre-fill common webhooks)
+
+---
+
+### 🔵 5. Analytics + Call History
+**What to add:**
+- `GET /api/agents/:id/calls` — paginated call sessions for that agent
+- Frontend: Call history tab per agent with transcript viewer
+- Cost breakdown per call
+
+---
+
+## What Should We Build Now?
+
+> **My recommendation: Start with #1 (Webhook Tool Executor)**
+> 
+> It's the highest-value feature for real-world usage and the backend is already perfectly set up for it. The `ToolExecutor` just needs a `webhook` branch added, and the tool builder in the UI needs 3 new fields.
+> 
+> Estimated time: ~2 hours for full end-to-end webhook tool support.
+
+
+#4 Add a agent tamplete registery
+
+#5 in frontend add dropdown for ai voice selection and time zone selection

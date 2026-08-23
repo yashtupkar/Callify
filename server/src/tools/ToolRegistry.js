@@ -6,6 +6,8 @@
  * Three categories:
  *  - BUILT_IN  : server-side tools with a real executor function.
  *                Registered via registerBuiltIn().
+ *  - WEBHOOK   : server-side tools that call external HTTP endpoints.
+ *                Registered via registerWebhook().
  *  - CUSTOM    : frontend-routed tools with schema only (no server executor).
  *                Registered via registerCustom().
  *  - SYSTEM    : end_call, save_collected_data — managed specially by ToolExecutor.
@@ -30,6 +32,9 @@ class ToolRegistry {
   constructor() {
     // Map<toolName, { schema, executor, fillerKey }>
     this._builtIn = new Map();
+
+    // Map<toolName, { schema, config }> — outbound HTTP webhook tools
+    this._webhook = new Map();
 
     // Map<toolName, { schema }>
     this._custom = new Map();
@@ -65,6 +70,18 @@ class ToolRegistry {
   }
 
   /**
+   * Register a webhook-based tool (server calls external HTTP endpoint).
+   *
+   * @param {string} name        Tool name
+   * @param {object} schema      OpenAI function-call schema object
+   * @param {object} toolConfig  Full tool config (webhookUrl, method, headers, etc.)
+   * @param {string} [fillerKey] Key into filler pool ('generic' by default)
+   */
+  registerWebhook(name, schema, toolConfig, fillerKey = 'generic') {
+    this._webhook.set(name, { schema, config: toolConfig, fillerKey });
+  }
+
+  /**
    * Add extra filler phrases for a tool key.
    * @param {string}   key     Filler key
    * @param {string[]} phrases Array of phrase strings
@@ -80,6 +97,16 @@ class ToolRegistry {
   /** Returns true if the tool has a server-side executor registered. */
   isBuiltIn(name) {
     return this._builtIn.has(name);
+  }
+
+  /** Returns true if the tool is a webhook (outbound HTTP) tool. */
+  isWebhook(name) {
+    return this._webhook.has(name);
+  }
+
+  /** Returns the webhook tool config (url, method, headers). */
+  getWebhookConfig(name) {
+    return this._webhook.get(name)?.config || null;
   }
 
   /** Returns true if the tool is a frontend-routed custom tool. */
@@ -105,8 +132,9 @@ class ToolRegistry {
    * @returns {string}
    */
   getFiller(name) {
-    const entry = this._builtIn.get(name);
-    const key = (entry && entry.fillerKey) || name;
+    const builtInEntry = this._builtIn.get(name);
+    const webhookEntry = this._webhook.get(name);
+    const key = (builtInEntry?.fillerKey) || (webhookEntry?.fillerKey) || name;
     const pool = this._fillers[key] || this._fillers.generic;
     return pool[Math.floor(Math.random() * pool.length)] + " ";
   }
@@ -114,12 +142,16 @@ class ToolRegistry {
   /**
    * Returns all tool schemas in OpenAI function-call format,
    * ready to be passed directly to the LLM.
-   * Includes: built-ins + customs + end_call (always last).
+   * Includes: built-ins + webhooks + customs + end_call (always last).
    */
   getAllSchemas() {
     const schemas = [];
 
     for (const { schema } of this._builtIn.values()) {
+      schemas.push(schema);
+    }
+
+    for (const { schema } of this._webhook.values()) {
       schemas.push(schema);
     }
 
@@ -153,6 +185,15 @@ class ToolRegistry {
    *
    * @param {string[]} fields  e.g. ['Name', 'Phone Number', 'Email']
    */
+  /**
+   * Remove the save_collected_data tool from the registry.
+   * Called by ToolExecutor after a successful save so the LLM no longer
+   * sees the tool in subsequent getAllSchemas() calls, preventing re-save loops.
+   */
+  removeDataCollectionTool() {
+    this._builtIn.delete('save_collected_data');
+  }
+
   injectDataCollectionTool(fields) {
     const properties = {};
     for (const field of fields) {
@@ -173,17 +214,56 @@ class ToolRegistry {
         parameters: {
           type: "object",
           properties,
-          required: Object.keys(properties)
+          required: Object.keys(properties),
+          additionalProperties: false
         }
       }
     };
 
-    // Register as built-in — ToolExecutor intercepts this before the executor
-    // is called, but we provide a passthrough executor as a safe fallback.
-    this._builtIn.set('save_collected_data', {
-      schema,
-      executor: async (args) => ({ success: true, data: args }),
-      fillerKey: 'save_collected_data'
+    // We don't use registerBuiltIn because save_collected_data is handled directly
+    // by ToolExecutor due to its complex lifecycle (ending turn early).
+    // So we just add the schema.
+    this._builtIn.set('save_collected_data', { schema, fillerKey: 'save_collected_data' });
+  }
+
+  injectInternalCrmTools() {
+    this._builtIn.set('internal_check_availability', {
+      schema: {
+        type: "function",
+        function: {
+          name: "internal_check_availability",
+          description: "Check the agent's internal calendar for availability before booking.",
+          parameters: {
+            type: "object",
+            properties: {
+              date: { type: "string", description: "The date to check (YYYY-MM-DD)." }
+            },
+            required: ["date"],
+            additionalProperties: false
+          }
+        }
+      },
+      fillerKey: 'generic'
+    });
+
+    this._builtIn.set('internal_create_booking', {
+      schema: {
+        type: "function",
+        function: {
+          name: "internal_create_booking",
+          description: "Book an appointment on the internal calendar. Only call this AFTER checking availability and confirming the slot with the caller.",
+          parameters: {
+            type: "object",
+            properties: {
+              startTime: { type: "string", description: "ISO 8601 start time (e.g. 2026-08-23T14:00:00+05:30)" },
+              endTime: { type: "string", description: "ISO 8601 end time (e.g. 2026-08-23T15:00:00+05:30)" }
+            },
+            required: ["startTime", "endTime"],
+            additionalProperties: false
+          }
+        }
+      },
+      fillerKey: 'generic'
     });
   }
 }

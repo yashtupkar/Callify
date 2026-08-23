@@ -18,8 +18,17 @@ router.get('/', async (req, res) => {
 // POST /api/agents - Create a new agent
 router.post('/', async (req, res) => {
   try {
-    const { name, systemPrompt, initialMessage, voiceId, language, tools } = req.body;
+    const { name, systemPrompt, initialMessage, voiceId, language, timezone, tools } = req.body;
     
+    // Quick patch: Find default workspace to prevent crashing since workspaceId is required
+    const defaultWorkspace = await dbService.prisma.workspace.findFirst({
+      where: { name: 'Default Workspace' }
+    });
+    
+    if (!defaultWorkspace) {
+      return res.status(500).json({ error: 'No default workspace found. Run seed script.' });
+    }
+
     // Fallback if tools is string, try parsing or default to empty
     let parsedTools = null;
     if (typeof tools === 'string') {
@@ -30,11 +39,13 @@ router.post('/', async (req, res) => {
 
     const newAgent = await dbService.prisma.agent.create({
       data: {
+        workspaceId: defaultWorkspace.id,
         name: name || 'Custom Agent',
         systemPrompt: systemPrompt || '',
         initialMessage: initialMessage || 'Hello!',
         voiceId: voiceId || null,
         language: language || 'en-US',
+        timezone: timezone || 'Asia/Kolkata',
         tools: parsedTools,
       }
     });
@@ -49,7 +60,7 @@ router.post('/', async (req, res) => {
 router.put('/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, systemPrompt, initialMessage, voiceId, language, tools } = req.body;
+    const { name, systemPrompt, initialMessage, voiceId, language, timezone, tools } = req.body;
     
     let parsedTools = null;
     if (typeof tools === 'string') {
@@ -66,6 +77,7 @@ router.put('/:id', async (req, res) => {
         ...(initialMessage && { initialMessage }),
         ...(voiceId !== undefined && { voiceId }),
         ...(language !== undefined && { language }),
+        ...(timezone !== undefined && { timezone }),
         ...(tools !== undefined && { tools: parsedTools }),
       }
     });

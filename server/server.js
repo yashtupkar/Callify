@@ -20,6 +20,9 @@ app.use('/api/agents', agentsRouter);
 const phoneNumbersRouter = require('./src/routes/phoneNumbers');
 app.use('/api/phonenumbers', phoneNumbersRouter);
 
+const crmRouter = require('./src/routes/crm');
+app.use('/api/crm', crmRouter);
+
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', service: 'realtime-voice-service' });
 });

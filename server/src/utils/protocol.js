@@ -44,21 +44,27 @@ function validateSessionStart(payload) {
     if (config.customTools.length > MAX_TOOLS) {
       throw new Error(`customTools array exceeds maximum allowed length of ${MAX_TOOLS}`);
     }
-    // Basic tool schema validation
+    // Accept both formats:
+    //  1. Raw tool config:  { name, type: 'webhook'|'frontend', webhookUrl?, ... }
+    //  2. OpenAI schema:    { type: 'function', function: { name, ... } }
     for (const tool of config.customTools) {
-      if (!tool || tool.type !== 'function' || !tool.function || typeof tool.function.name !== 'string') {
-        throw new Error('Invalid customTools schema. Expected OpenAI function structure.');
+      const isRawConfig = tool && typeof tool.name === 'string' && tool.name.trim();
+      const isOpenAISchema = tool && tool.type === 'function' && tool.function && typeof tool.function.name === 'string';
+      if (!isRawConfig && !isOpenAISchema) {
+        throw new Error('Invalid customTools schema. Each tool must have a name (raw config) or type="function" with function.name (OpenAI schema).');
       }
     }
   }
 
   return {
-    type: 'session.start',
+    valid: true,
     config: {
+      agentId: config.agentId || null,
       systemPrompt: config.systemPrompt || '',
       firstMessage: config.firstMessage || '',
       voiceId: config.voiceId || null,
       language: config.language || 'en-US',
+      timezone: config.timezone || 'Asia/Kolkata',
       dataToCollect: Array.isArray(config.dataToCollect) ? config.dataToCollect : [],
       customTools: config.customTools || []
     }

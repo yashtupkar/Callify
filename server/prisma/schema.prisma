@@ -6,47 +6,117 @@ datasource db {
   provider = "postgresql"
 }
 
+model Workspace {
+  id           String        @id @default(uuid())
+  name         String
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  
+  agents       Agent[]
+  phoneNumbers PhoneNumber[]
+  callSessions CallSession[]
+}
+
 model Agent {
   id             String        @id @default(uuid())
+  workspaceId    String
+  type           String        @default("general") // 'dental', 'general', etc.
   name           String
   systemPrompt   String
   initialMessage String
   voiceId        String?
   language       String?       @default("en-US")
+  timezone       String?       @default("Asia/Kolkata")
   tools          Json?
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
-  PhoneNumber    PhoneNumber[]
+  
+  workspace      Workspace     @relation(fields: [workspaceId], references: [id])
+  phoneNumbers   PhoneNumber[]
+  callSessions   CallSession[]
+  contacts       Contact[]
+  bookings       Booking[]
+  availabilities Availability[]
 }
 
 model PhoneNumber {
-  id          String   @id
-  phoneNumber String   @unique
+  id          String    @id @default(uuid())
+  workspaceId String?
+  phoneNumber String    @unique
   agentId     String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime
-  Agent       Agent?   @relation(fields: [agentId], references: [id])
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  
+  workspace   Workspace? @relation(fields: [workspaceId], references: [id])
+  agent       Agent?     @relation(fields: [agentId], references: [id])
 }
 
 model CallSession {
-  id                  String   @id @default(uuid())
-  createdAt           DateTime @default(now())
+  id                  String    @id @default(uuid())
+  workspaceId         String?
+  agentId             String?
+  createdAt           DateTime  @default(now())
   endedAt             DateTime?
-  provider            String   @default("browser_websocket")
+  provider            String    @default("browser_websocket")
   
   // Costs
-  sttCost             Float    @default(0.0)
-  llmCost             Float    @default(0.0)
-  ttsCost             Float    @default(0.0)
-  totalCost           Float    @default(0.0)
+  sttCost             Float     @default(0.0)
+  llmCost             Float     @default(0.0)
+  ttsCost             Float     @default(0.0)
+  totalCost           Float     @default(0.0)
   
   // Usage tracking
-  sttDurationSeconds  Int      @default(0)
-  llmPromptTokens     Int      @default(0)
-  llmCompletionTokens Int      @default(0)
-  ttsCharacters       Int      @default(0)
-  toolCalls           Int      @default(0)
+  sttDurationSeconds  Int       @default(0)
+  llmPromptTokens     Int       @default(0)
+  llmCompletionTokens Int       @default(0)
+  ttsCharacters       Int       @default(0)
+  toolCalls           Int       @default(0)
   
   // Full raw transcript payload
   transcript          Json?
+
+  workspace           Workspace? @relation(fields: [workspaceId], references: [id])
+  agent               Agent?     @relation(fields: [agentId], references: [id])
 }
+
+model Contact {
+  id          String    @id @default(uuid())
+  agentId     String
+  name        String?
+  email       String?
+  phone       String?
+  metadata    Json?     // Stores extra fields like budget, company, etc.
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  agent       Agent     @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  bookings    Booking[]
+}
+
+model Booking {
+  id          String    @id @default(uuid())
+  agentId     String
+  contactId   String
+  startTime   DateTime
+  endTime     DateTime
+  status      String    @default("confirmed") // 'confirmed', 'cancelled'
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  agent       Agent     @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  contact     Contact   @relation(fields: [contactId], references: [id], onDelete: Cascade)
+}
+
+model Availability {
+  id          String    @id @default(uuid())
+  agentId     String
+  dayOfWeek   Int       // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
+  startTime   String    // e.g. "09:00"
+  endTime     String    // e.g. "17:00"
+  isActive    Boolean   @default(true)
+
+  agent       Agent     @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  
+  @@unique([agentId, dayOfWeek])
+}
+

@@ -75,11 +75,7 @@ class LLMService extends LLMProvider {
         if (delta.tool_calls) {
           const toolCall = delta.tool_calls[0];
           if (toolCall.id) {
-            // New tool call starting
-            if (currentToolCall) {
-               // Emitting previous tool call if any
-               this.emit('tool_call', currentToolCall.name, JSON.parse(toolCallArgs));
-            }
+            // New tool call starting — accumulate; emit only after stream ends
             currentToolCall = {
               id: toolCall.id,
               name: toolCall.function.name

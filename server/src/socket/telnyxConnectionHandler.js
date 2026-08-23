@@ -1,6 +1,7 @@
 const { ConversationManager } = require('../services/ConversationManager');
 const { TelnyxChannelAdapter } = require('../channels/TelnyxChannelAdapter');
 const { dbService } = require('../services/DatabaseService');
+const { loadAgentRuntime } = require('../modules/agent/agentRuntime');
 
 function setupTelnyxConnectionHandler(ws, req, to = null) {
   console.log('[TelnyxConnectionHandler] Initializing new session...');
@@ -28,14 +29,25 @@ function setupTelnyxConnectionHandler(ws, req, to = null) {
             // Find if this phone number is mapped to an Agent
             const dbPhone = await dbService.prisma.phoneNumber.findUnique({
               where: { phoneNumber: to },
-              include: { Agent: true }
             });
             
-            if (dbPhone && dbPhone.Agent) {
-              console.log(`[TelnyxConnectionHandler] Routing call to Agent: ${dbPhone.Agent.name}`);
+            if (dbPhone && dbPhone.agentId) {
+              console.log(`[TelnyxConnectionHandler] Routing call to Agent ID: ${dbPhone.agentId}`);
+              
+              const { agent, registry, systemPrompt } = await loadAgentRuntime(dbPhone.agentId);
+              
+              // We pass the built registry to startConversation
+              // We'll need to update startConversation to accept a registry instance, 
+              // but for now we can just attach it to config or replace the ConversationManager registry
+              conversationManager.registry = registry;
+              conversationManager.toolExecutor.registry = registry;
+              
               config = {
-                systemPrompt: dbPhone.Agent.systemPrompt,
-                voice: dbPhone.Agent.voiceId || "alloy"
+                ...agent,
+                systemPrompt,
+                firstMessage: agent.initialMessage,
+                voiceId: agent.voiceId,
+                language: agent.language
               };
             } else {
               console.log(`[TelnyxConnectionHandler] Dialed number ${to} has no mapped Agent. Using default config.`);
