@@ -190,6 +190,39 @@ class ToolExecutor {
               end: b.endTime.toISOString()
             }))
           };
+
+          if (args.time) {
+            // Very basic check to assist the LLM
+            const [reqH, reqM] = args.time.split(':').map(Number);
+            const [startH, startM] = availability.startTime.split(':').map(Number);
+            const [endH, endM] = availability.endTime.split(':').map(Number);
+            
+            const reqTimeVal = reqH * 60 + reqM;
+            const startVal = startH * 60 + startM;
+            const endVal = endH * 60 + endM;
+
+            if (reqTimeVal < startVal || reqTimeVal >= endVal) {
+              result.isRequestedTimeAvailable = false;
+              result.message = `The requested time ${args.time} is outside working hours.`;
+            } else {
+              // Check overlap with existing bookings (assuming 1-hour slots for simplicity)
+              const reqDateStart = new Date(date);
+              reqDateStart.setHours(reqH, reqM, 0, 0);
+              const reqDateEnd = new Date(reqDateStart.getTime() + 60 * 60 * 1000); // +1 hour
+              
+              const isOverlap = bookings.some(b => {
+                return (reqDateStart < b.endTime && reqDateEnd > b.startTime);
+              });
+              
+              if (isOverlap) {
+                result.isRequestedTimeAvailable = false;
+                result.message = `The requested time ${args.time} is already booked.`;
+              } else {
+                result.isRequestedTimeAvailable = true;
+                result.message = `The requested time ${args.time} is available!`;
+              }
+            }
+          }
         }
       } catch (err) {
         console.error('[ToolExecutor] Error in internal_check_availability:', err);

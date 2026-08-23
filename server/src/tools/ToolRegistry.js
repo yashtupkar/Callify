@@ -226,6 +226,7 @@ class ToolRegistry {
     this._builtIn.set('save_collected_data', { schema, fillerKey: 'save_collected_data' });
   }
 
+
   injectInternalCrmTools() {
     this._builtIn.set('internal_check_availability', {
       schema: {
@@ -236,7 +237,8 @@ class ToolRegistry {
           parameters: {
             type: "object",
             properties: {
-              date: { type: "string", description: "The date to check (YYYY-MM-DD)." }
+              date: { type: "string", description: "The date to check (YYYY-MM-DD)." },
+              time: { type: "string", description: "Optional. The specific time to check (HH:MM in 24-hour format)." }
             },
             required: ["date"],
             additionalProperties: false
