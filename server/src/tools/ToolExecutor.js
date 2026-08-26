@@ -98,34 +98,47 @@ class ToolExecutor {
       // Save to Native CRM Database
       if (this.agentId) {
         try {
-          // Extract known fields (case insensitive)
+          // Extract known fields (case insensitive), treat empty strings as absent
           const nameKey = Object.keys(args).find(k => k.toLowerCase() === 'name');
           const emailKey = Object.keys(args).find(k => k.toLowerCase() === 'email');
           const phoneKey = Object.keys(args).find(k => k.toLowerCase() === 'phone');
           
-          const name = nameKey ? String(args[nameKey]) : null;
-          const email = emailKey ? String(args[emailKey]) : null;
-          const phone = phoneKey ? String(args[phoneKey]) : null;
+          const name = (nameKey && args[nameKey]?.trim()) ? String(args[nameKey]).trim() : null;
+          const email = (emailKey && args[emailKey]?.trim()) ? String(args[emailKey]).trim() : null;
+          const phone = (phoneKey && args[phoneKey]?.trim()) ? String(args[phoneKey]).trim() : null;
 
-          // Put everything else in metadata
-          const metadata = { ...args };
-          if (nameKey) delete metadata[nameKey];
-          if (emailKey) delete metadata[emailKey];
-          if (phoneKey) delete metadata[phoneKey];
+          // Put everything else (non-empty) in metadata
+          const metadata = {};
+          for (const [k, v] of Object.entries(args)) {
+            if (k === nameKey || k === emailKey || k === phoneKey) continue;
+            if (v && String(v).trim()) metadata[k] = v;
+          }
 
-          const contact = await dbService.prisma.contact.create({
-            data: {
-              agentId: this.agentId,
-              name,
-              email,
-              phone,
-              metadata
-            }
-          });
-          
-          // Save contactId on this class instance for later tools (e.g. booking)
+          // Try to find an existing contact for this agent by phone number (returning callers)
+          let contact;
+          if (phone) {
+            contact = await dbService.prisma.contact.findFirst({
+              where: { agentId: this.agentId, phone }
+            });
+          }
+
+          if (contact) {
+            // Returning caller — update their record and reuse their ID
+            contact = await dbService.prisma.contact.update({
+              where: { id: contact.id },
+              data: { name: name || contact.name, email: email || contact.email, metadata }
+            });
+            console.log('[ToolExecutor] Native CRM: Recognized returning caller, Contact ID', contact.id);
+          } else {
+            // New caller — create a fresh Contact record
+            contact = await dbService.prisma.contact.create({
+              data: { agentId: this.agentId, name, email, phone, metadata }
+            });
+            console.log('[ToolExecutor] Native CRM: Created new Contact ID', contact.id);
+          }
+
+          // Save contactId on this class instance for later tools (e.g. booking/cancel)
           this.currentContactId = contact.id;
-          console.log('[ToolExecutor] Native CRM: Saved Contact ID', contact.id);
         } catch (dbErr) {
           console.error('[ToolExecutor] Error saving to Native CRM:', dbErr);
         }
@@ -259,6 +272,123 @@ class ToolExecutor {
         result = { error: err.message };
       }
 
+      const toolCallId = this._appendToolCall(toolName, args, preamble, llmToolCallId);
+      this._appendToolResult(toolName, toolCallId, result);
+      this._rePromptLLM();
+      return;
+    }
+
+    if (toolName === 'internal_get_bookings') {
+      this._playFiller(toolName);
+      let result;
+      try {
+        if (!this.agentId) throw new Error('Agent ID is missing.');
+        if (!this.currentContactId) {
+          result = { success: false, error: "I don't have your details on file yet. Could you please share your name and phone number first?" };
+        } else {
+          const bookings = await dbService.prisma.booking.findMany({
+            where: {
+              agentId: this.agentId,
+              contactId: this.currentContactId,
+              status: 'confirmed'
+            },
+            orderBy: { startTime: 'asc' }
+          });
+          if (bookings.length === 0) {
+            result = { success: true, message: 'No upcoming confirmed bookings found for this caller.', bookings: [] };
+          } else {
+            result = {
+              success: true,
+              bookings: bookings.map(b => ({
+                bookingId: b.id,
+                startTime: b.startTime.toISOString(),
+                endTime: b.endTime.toISOString(),
+                status: b.status
+              }))
+            };
+          }
+        }
+      } catch (err) {
+        console.error('[ToolExecutor] Error in internal_get_bookings:', err);
+        result = { error: err.message };
+      }
+      const toolCallId = this._appendToolCall(toolName, args, preamble, llmToolCallId);
+      this._appendToolResult(toolName, toolCallId, result);
+      this._rePromptLLM();
+      return;
+    }
+
+    if (toolName === 'internal_cancel_booking') {
+      this._playFiller(toolName);
+      let result;
+      try {
+        if (!this.agentId) throw new Error('Agent ID is missing.');
+        if (!args.bookingId) throw new Error('bookingId is required.');
+        // Verify ownership — make sure this booking belongs to this agent
+        const existing = await dbService.prisma.booking.findFirst({
+          where: { id: args.bookingId, agentId: this.agentId }
+        });
+        if (!existing) {
+          result = { success: false, error: 'Booking not found or does not belong to this agent.' };
+        } else if (existing.status === 'cancelled') {
+          result = { success: false, error: 'This booking is already cancelled.' };
+        } else {
+          await dbService.prisma.booking.update({
+            where: { id: args.bookingId },
+            data: { status: 'cancelled' }
+          });
+          result = { success: true, message: 'Appointment successfully cancelled.' };
+        }
+      } catch (err) {
+        console.error('[ToolExecutor] Error in internal_cancel_booking:', err);
+        result = { error: err.message };
+      }
+      const toolCallId = this._appendToolCall(toolName, args, preamble, llmToolCallId);
+      this._appendToolResult(toolName, toolCallId, result);
+      this._rePromptLLM();
+      return;
+    }
+
+    if (toolName === 'internal_reschedule_booking') {
+      this._playFiller(toolName);
+      let result;
+      try {
+        if (!this.agentId) throw new Error('Agent ID is missing.');
+        if (!args.bookingId || !args.startTime || !args.endTime) throw new Error('bookingId, startTime, and endTime are required.');
+        const existing = await dbService.prisma.booking.findFirst({
+          where: { id: args.bookingId, agentId: this.agentId }
+        });
+        if (!existing) {
+          result = { success: false, error: 'Booking not found or does not belong to this agent.' };
+        } else if (existing.status === 'cancelled') {
+          result = { success: false, error: 'Cannot reschedule a cancelled booking. Please create a new one.' };
+        } else {
+          const newStart = new Date(args.startTime);
+          const newEnd = new Date(args.endTime);
+          // Check for conflicts at the new time (excluding the booking being rescheduled)
+          const conflict = await dbService.prisma.booking.findFirst({
+            where: {
+              agentId: this.agentId,
+              id: { not: args.bookingId },
+              status: 'confirmed',
+              startTime: { lt: newEnd },
+              endTime: { gt: newStart }
+            }
+          });
+          if (conflict) {
+            result = { success: false, error: `That time slot is already booked (conflict from ${conflict.startTime.toISOString()} to ${conflict.endTime.toISOString()}). Please choose a different time.` };
+          } else {
+            await dbService.prisma.booking.update({
+              where: { id: args.bookingId },
+              data: { startTime: newStart, endTime: newEnd, status: 'confirmed' }
+            });
+            result = { success: true, message: `Appointment rescheduled to ${newStart.toISOString()}.` };
+          }
+        }
+      } catch (err) {
+        console.error('[ToolExecutor] Error in internal_reschedule_booking:', err);
+        result = { error: err.message };
+      }
       const toolCallId = this._appendToolCall(toolName, args, preamble, llmToolCallId);
       this._appendToolResult(toolName, toolCallId, result);
       this._rePromptLLM();

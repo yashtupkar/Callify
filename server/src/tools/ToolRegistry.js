@@ -209,12 +209,14 @@ class ToolRegistry {
       function: {
         name: "save_collected_data",
         description:
-          "Save the caller's information after collecting and confirming all required fields. " +
-          "Only call this once every required field has been confirmed by the caller.",
+          "Save the caller's information to the CRM database. " +
+          "For NEW bookings: collect and confirm all fields before calling this. " +
+          "For returning callers (cancel/reschedule): you may call this with just name and phone to identify them — other fields are optional. " +
+          "Do NOT pass empty strings; omit fields you haven't collected.",
         parameters: {
           type: "object",
           properties,
-          required: Object.keys(properties),
+          required: [],
           additionalProperties: false
         }
       }
@@ -261,6 +263,58 @@ class ToolRegistry {
               endTime: { type: "string", description: "ISO 8601 end time (e.g. 2026-08-23T15:00:00+05:30)" }
             },
             required: ["startTime", "endTime"],
+            additionalProperties: false
+          }
+        }
+      },
+      fillerKey: 'generic'
+    });
+
+    this._builtIn.set('internal_get_bookings', {
+      schema: {
+        type: "function",
+        function: {
+          name: "internal_get_bookings",
+          description: "Retrieve the caller's upcoming confirmed appointments from the internal CRM. IMPORTANT: You MUST call 'save_collected_data' first to identify the caller before calling this tool. Call this when a caller wants to cancel or reschedule — you need the bookingId before you can act on it.",
+          parameters: { type: "object", properties: {}, additionalProperties: false }
+        }
+      },
+      fillerKey: 'generic'
+    });
+
+    this._builtIn.set('internal_cancel_booking', {
+      schema: {
+        type: "function",
+        function: {
+          name: "internal_cancel_booking",
+          description: "Cancel an existing appointment. You MUST call internal_get_bookings first to get the bookingId, and you MUST confirm the cancellation with the caller before calling this.",
+          parameters: {
+            type: "object",
+            properties: {
+              bookingId: { type: "string", description: "The internal CRM ID of the booking to cancel (obtained from internal_get_bookings)." }
+            },
+            required: ["bookingId"],
+            additionalProperties: false
+          }
+        }
+      },
+      fillerKey: 'generic'
+    });
+
+    this._builtIn.set('internal_reschedule_booking', {
+      schema: {
+        type: "function",
+        function: {
+          name: "internal_reschedule_booking",
+          description: "Reschedule an existing appointment to a new date and time. You MUST call internal_get_bookings first to get the bookingId, and you MUST confirm the new time with the caller before calling this.",
+          parameters: {
+            type: "object",
+            properties: {
+              bookingId: { type: "string", description: "The internal CRM ID of the booking to reschedule." },
+              startTime: { type: "string", description: "New ISO 8601 start time (e.g. 2026-08-25T10:00:00+05:30)." },
+              endTime: { type: "string", description: "New ISO 8601 end time (e.g. 2026-08-25T11:00:00+05:30)." }
+            },
+            required: ["bookingId", "startTime", "endTime"],
             additionalProperties: false
           }
         }

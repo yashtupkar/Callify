@@ -18,7 +18,7 @@ export default function CrmDashboard({ agentId }) {
       try {
         const [contacts, bookings, availability] = await Promise.all([
           axios.get(`${API_CRM}/agents/${agentId}/contacts`),
-          axios.get(`${API_CRM}/agents/${agentId}/bookings`),
+          axios.get(`${API_CRM}/agents/${agentId}/bookings?all=true`),
           axios.get(`${API_CRM}/agents/${agentId}/availability`),
         ]);
         setData({
@@ -112,13 +112,25 @@ function BookingsView({ bookings }) {
   if (bookings.length === 0) return <div className="text-muted-foreground">No bookings yet.</div>;
   return (
     <div className="space-y-4">
-      {bookings.map(b => (
-        <div key={b.id} className="p-4 rounded-lg bg-card border border-border shadow-sm flex flex-col gap-1">
-          <div className="font-medium text-lg">{new Date(b.startTime).toLocaleString()} - {new Date(b.endTime).toLocaleTimeString()}</div>
-          <div className="text-sm text-zinc-300">Client: {b.contact?.name || 'Unknown'}</div>
-          <div className="text-xs text-zinc-500 mt-2">Status: <span className="text-green-400 uppercase font-semibold">{b.status}</span></div>
-        </div>
-      ))}
+      {bookings.map(b => {
+        const isCancelled = b.status === 'cancelled';
+        const isRescheduled = b.status === 'rescheduled';
+        return (
+          <div key={b.id} className={`p-4 rounded-lg border shadow-sm flex flex-col gap-1 ${isCancelled ? 'bg-red-950/20 border-red-800/40 opacity-70' : 'bg-card border-border'}`}>
+            <div className={`font-medium text-lg ${isCancelled ? 'line-through text-zinc-500' : ''}`}>
+              {new Date(b.startTime).toLocaleString()} &mdash; {new Date(b.endTime).toLocaleTimeString()}
+            </div>
+            <div className="text-sm text-zinc-300">Client: {b.contact?.name || 'Unknown'}</div>
+            {b.contact?.phone && <div className="text-xs text-zinc-500">Phone: {b.contact.phone}</div>}
+            <div className="text-xs mt-1">
+              Status:{' '}
+              <span className={`uppercase font-semibold ${isCancelled ? 'text-red-400' : 'text-green-400'}`}>
+                {b.status}
+              </span>
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }

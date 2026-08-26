@@ -17,10 +17,15 @@ router.get('/agents/:agentId/contacts', async (req, res) => {
 });
 
 // GET /api/crm/agents/:agentId/bookings
+// Query params: ?all=true to include cancelled bookings (default: confirmed only)
 router.get('/agents/:agentId/bookings', async (req, res) => {
   try {
+    const showAll = req.query.all === 'true';
+    const whereClause = { agentId: req.params.agentId };
+    if (!showAll) whereClause.status = { not: 'cancelled' };
+
     const bookings = await dbService.prisma.booking.findMany({
-      where: { agentId: req.params.agentId },
+      where: whereClause,
       include: { contact: true },
       orderBy: { startTime: 'asc' }
     });
