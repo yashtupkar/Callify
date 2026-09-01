@@ -4,12 +4,16 @@ import axios from 'axios';
 import { API_AGENTS, WS_URL } from '../lib/constants';
 import { useVoiceSession } from '../hooks/useVoiceSession';
 
-import AgentSidebar from '../components/agent/AgentSidebar';
 import AgentConfig from '../components/agent/AgentConfig';
 import AgentBuilderChat from '../components/agent/AgentBuilderChat';
 import TestInterface from '../components/agent/TestInterface';
 import AnalyticsModal from '../components/modals/AnalyticsModal';
 import PhoneNumberModal from '../components/modals/PhoneNumberModal';
+import { Button } from '@/components/ui/button';
+import { Plus, Phone, ChevronLeft, ChevronRight, Bot, Settings2, Save, BarChart3, Loader2 } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { cn } from '@/lib/utils';
+import { toast } from '@/hooks/use-toast';
 
 /** Converts the UI builder tool list -> OpenAI-format schemas for saving/sending */
 export function buildToolSchemas(customTools = []) {
@@ -63,7 +67,7 @@ export default function AgentStudioPage() {
 
   const [showPhoneDialog, setShowPhoneDialog] = useState(false);
   const [showAnalytics, setShowAnalytics] = useState(false);
-  const [viewMode, setViewMode] = useState('chat'); // 'chat' | 'config'
+  const [viewMode, setViewMode] = useState('chat');
   const [isSaving, setIsSaving] = useState(false);
 
   const fetchAgents = useCallback(async () => {
@@ -143,9 +147,7 @@ export default function AgentStudioPage() {
     setCustomTools(parsedCustomTools);
   }
 
-  const selectAgent = (agent) => {
-    navigate(`/agents/${agent.id}`);
-  };
+  const selectAgent = (agent) => navigate(`/agents/${agent.id}`);
 
   function createNewAgent() {
     navigate('/agents');
@@ -172,13 +174,16 @@ export default function AgentStudioPage() {
     try {
       if (agentId) {
         await axios.put(`${API_AGENTS}/${agentId}`, payload);
+        try { toast({ title: 'Saved', description: 'Agent updated.' }); } catch {}
       } else {
         const res = await axios.post(API_AGENTS, payload);
         navigate(`/agents/${res.data.id}`);
+        try { toast({ title: 'Created', description: 'New agent created.' }); } catch {}
       }
       fetchAgents();
     } catch (err) {
       console.error('Failed to save agent', err);
+      try { toast({ title: 'Save failed', description: 'Could not save the agent.', variant: 'destructive' }); } catch {}
     }
   };
 
@@ -221,43 +226,80 @@ export default function AgentStudioPage() {
     if (!isConnected && cost) setShowAnalytics(true);
   }, [isConnected, cost]);
 
-  return (
-    <div className="h-screen w-full bg-background text-foreground flex overflow-hidden">
-      {/* LEFT: Agent List */}
-      <AgentSidebar
-        agents={agents}
-        activeAgentId={agentId || null}
-        onSelectAgent={selectAgent}
-        onCreateNew={createNewAgent}
-        onOpenPhoneDialog={() => setShowPhoneDialog(true)}
-      />
+  const currentAgent = agents.find(a => a.id === agentId);
 
+  return (
+    <div className="h-screen w-full flex overflow-hidden bg-background">
       {/* CENTER: Builder or Configuration */}
-      <div className="flex-1 flex flex-col min-w-[500px] h-screen">
-        <div className="flex border-b border-border bg-card p-2 justify-center space-x-2 shrink-0">
-          <button
-            onClick={() => setViewMode('chat')}
-            className={`px-4 py-1.5 text-sm font-medium rounded-md transition-colors ${
-              viewMode === 'chat' ? 'bg-primary text-primary-foreground' : 'bg-transparent text-muted-foreground hover:bg-white/5 hover:text-foreground'
-            }`}
-          >
-            Builder Chat
-          </button>
-          <button
-            onClick={() => setViewMode('config')}
-            className={`px-4 py-1.5 text-sm font-medium rounded-md transition-colors ${
-              viewMode === 'config' ? 'bg-primary text-primary-foreground' : 'bg-transparent text-muted-foreground hover:bg-white/5 hover:text-foreground'
-            }`}
-          >
-            Advanced Settings
-          </button>
+      <div className="flex-1 flex flex-col min-w-0 min-h-0">
+        {/* Single solid studio header */}
+        <div className="h-16 shrink-0 border-b border-border bg-card flex items-center px-5 gap-4">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="h-9 w-9 rounded-xl bg-foreground flex items-center justify-center text-background shrink-0">
+              <Bot className="h-4.5 w-4.5" />
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+                <Link to="/crm/agents" className="hover:text-foreground">Agents</Link>
+                <ChevronRight className="w-3 h-3" />
+                <span>{currentAgent ? 'Studio' : 'New agent'}</span>
+              </div>
+              <h1 className="text-base font-semibold tracking-tight truncate">
+                {currentAgent ? currentAgent.name : 'Create a new agent'}
+              </h1>
+            </div>
+          </div>
+
+          {/* View-mode tabs (centered) */}
+          <div className="mx-auto flex items-center gap-1 p-1 rounded-lg border border-border bg-muted/30">
+            <button
+              onClick={() => setViewMode('chat')}
+              className={cn(
+                'px-3 py-1.5 text-xs font-medium rounded-md transition-all flex items-center gap-1.5',
+                viewMode === 'chat'
+                  ? 'bg-primary text-primary-foreground shadow-sm'
+                  : 'text-muted-foreground hover:text-foreground'
+              )}
+            >
+              <Bot className="w-3.5 h-3.5" /> Builder
+            </button>
+            <button
+              onClick={() => setViewMode('config')}
+              disabled={!agentId}
+              className={cn(
+                'px-3 py-1.5 text-xs font-medium rounded-md transition-all flex items-center gap-1.5',
+                viewMode === 'config'
+                  ? 'bg-primary text-primary-foreground shadow-sm'
+                  : 'text-muted-foreground hover:text-foreground',
+                !agentId && 'opacity-50 cursor-not-allowed'
+              )}
+            >
+              <Settings2 className="w-3.5 h-3.5" /> Advanced
+            </button>
+          </div>
+
+          {/* Right actions */}
+          <div className="ml-auto flex items-center gap-2 shrink-0">
+            <Button variant="outline" size="sm" onClick={() => setShowPhoneDialog(true)}>
+              <Phone className="w-3.5 h-3.5 mr-1.5" /> Phone numbers
+            </Button>
+            {agentId && (
+              <Button variant="ghost" size="sm" onClick={() => navigate(`/crm/agent/${agentId}`)}>
+                <BarChart3 className="w-3.5 h-3.5 mr-1.5" /> CRM
+              </Button>
+            )}
+            <Button size="sm" onClick={wrappedSave} disabled={isSaving}>
+              {isSaving ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Save className="w-3.5 h-3.5 mr-1.5" />}
+              {isSaving ? 'Saving…' : 'Save'}
+            </Button>
+          </div>
         </div>
 
         <div className="flex-1 min-h-0 overflow-hidden">
           {!agentId ? (
-            <AgentBuilderChat config={config} setConfig={setConfig} onSave={wrappedSave} />
+            <AgentBuilderChat config={config} setConfig={setConfig} onSave={wrappedSave} hideHeader />
           ) : viewMode === 'chat' ? (
-            <AgentBuilderChat config={config} setConfig={setConfig} onSave={wrappedSave} />
+            <AgentBuilderChat config={config} setConfig={setConfig} onSave={wrappedSave} hideHeader />
           ) : (
             <AgentConfig
               config={config}
@@ -270,7 +312,7 @@ export default function AgentStudioPage() {
               onSave={wrappedSave}
               onDelete={deleteAgent}
               onPhoneAssign={fetchPhoneNumbers}
-              onGoToCRM={() => navigate(`/crm/agent/${agentId}`)}
+              hideHeader
             />
           )}
         </div>

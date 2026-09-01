@@ -9,7 +9,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu';
-import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import { NameAvatar } from '@/components/ui/name-avatar';
 import { LogOut, ArrowLeft, User } from 'lucide-react';
 
 const routeTitles = {
@@ -64,11 +64,7 @@ export default function CrmTopbar() {
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button variant="ghost" className="h-10 gap-2 px-2 rounded-full">
-            <Avatar className="h-8 w-8">
-              <AvatarFallback className="bg-primary/10 text-primary text-sm font-semibold">
-                {user?.email?.charAt(0).toUpperCase() || 'U'}
-              </AvatarFallback>
-            </Avatar>
+            <NameAvatar name={user?.name} email={user?.email} size="sm" />
             <span className="hidden sm:inline-block text-sm font-medium">{user?.email}</span>
           </Button>
         </DropdownMenuTrigger>

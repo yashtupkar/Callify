@@ -4,7 +4,7 @@ import { Send, Bot, User, Loader2 } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Button } from '@/components/ui/button';
 
-export default function AgentBuilderChat({ config, setConfig, onSave }) {
+export default function AgentBuilderChat({ config, setConfig, onSave, hideHeader = false }) {
   const [messages, setMessages] = useState([
     { role: 'assistant', content: "Hi! I'm your AI agent builder. What kind of voice agent would you like to create today? For example, 'I want a dental clinic assistant'." }
   ]);
@@ -69,18 +69,20 @@ export default function AgentBuilderChat({ config, setConfig, onSave }) {
 
   return (
     <div className="flex flex-col h-full bg-zinc-950 border-r border-border min-w-0 flex-1">
-      <div className="p-4 border-b border-border flex justify-between items-center bg-card shrink-0">
-        <h1 className="text-xl font-bold flex items-center gap-2">
-          <Bot className="w-5 h-5 text-primary" />
-          Agent Builder
-        </h1>
-        <div className="flex gap-2">
-          <Button onClick={handleSaveClick} size="sm" className="gap-2" disabled={isSaving}>
-            {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
-            {isSaving ? 'Saving…' : 'Save Agent'}
-          </Button>
+      {!hideHeader && (
+        <div className="p-4 border-b border-border flex justify-between items-center bg-card shrink-0">
+          <h1 className="text-xl font-bold flex items-center gap-2">
+            <Bot className="w-5 h-5 text-primary" />
+            Agent Builder
+          </h1>
+          <div className="flex gap-2">
+            <Button onClick={handleSaveClick} size="sm" className="gap-2" disabled={isSaving}>
+              {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+              {isSaving ? 'Saving…' : 'Save Agent'}
+            </Button>
+          </div>
         </div>
-      </div>
+      )}
 
       <ScrollArea className="flex-1 p-4">
         <div className="space-y-4 max-w-3xl mx-auto pb-4">

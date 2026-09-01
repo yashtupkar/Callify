@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from '@/hooks/useAuth';
+import { Toaster } from '@/components/ui/toaster';
 import AgentStudioPage from '@/pages/AgentStudioPage';
 import LoginPage from '@/pages/LoginPage';
 import RegisterPage from '@/pages/RegisterPage';
@@ -42,7 +43,7 @@ function App() {
             </Route>
           </Route>
 
-          {/* Admin-only: agent studio */}
+          {/* Admin-only: agent studio (uses the same AppSidebar via RequireAdmin) */}
           <Route element={<RequireAdmin />}>
             <Route path="/agents" element={<AgentStudioPage />} />
             <Route path="/agents/:agentId" element={<AgentStudioPage />} />
@@ -51,6 +52,7 @@ function App() {
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </BrowserRouter>
+      <Toaster />
     </AuthProvider>
   );
 }
