@@ -1,12 +1,43 @@
 const express = require('express');
 const router = express.Router();
 const { dbService } = require('../services/DatabaseService');
+const { authenticate } = require('../middleware/auth');
+
+// All CRM endpoints require authentication. Admins see everything.
+// Users only see data for agents that include their email in allowedEmails.
+function scopeAgentsForUser(user) {
+  return user.role === 'admin' ? {} : { allowedEmails: { has: user.email } };
+}
+
+async function ensureAgentAccess(req, res) {
+  const { agentId } = req.params;
+  if (req.user.role === 'admin') return true;
+  if (agentId === 'all') return true;
+  const agent = await dbService.prisma.agent.findUnique({
+    where: { id: agentId },
+    select: { allowedEmails: true },
+  });
+  if (!agent) {
+    res.status(404).json({ error: 'Agent not found' });
+    return false;
+  }
+  if (!agent.allowedEmails.includes(req.user.email)) {
+    res.status(403).json({ error: 'Forbidden: no access to this agent' });
+    return false;
+  }
+  return true;
+}
 
 // GET /api/crm/agents/:agentId/contacts
-router.get('/agents/:agentId/contacts', async (req, res) => {
+router.get('/agents/:agentId/contacts', authenticate, async (req, res) => {
   try {
+    if (!(await ensureAgentAccess(req, res))) return;
+    const where = { agentId: req.params.agentId };
+    if (req.user.role !== 'admin') {
+      where.agent = scopeAgentsForUser(req.user);
+    }
     const contacts = await dbService.prisma.contact.findMany({
-      where: { agentId: req.params.agentId },
+      where,
       orderBy: { createdAt: 'desc' }
     });
     res.json(contacts);
@@ -17,15 +48,18 @@ router.get('/agents/:agentId/contacts', async (req, res) => {
 });
 
 // GET /api/crm/agents/:agentId/bookings
-// Query params: ?all=true to include cancelled bookings (default: confirmed only)
-router.get('/agents/:agentId/bookings', async (req, res) => {
+// Query params: ?all=true to include cancelled bookings
+router.get('/agents/:agentId/bookings', authenticate, async (req, res) => {
   try {
+    if (!(await ensureAgentAccess(req, res))) return;
     const showAll = req.query.all === 'true';
-    const whereClause = { agentId: req.params.agentId };
-    if (!showAll) whereClause.status = { not: 'cancelled' };
-
+    const where = { agentId: req.params.agentId };
+    if (!showAll) where.status = { not: 'cancelled' };
+    if (req.user.role !== 'admin') {
+      where.agent = scopeAgentsForUser(req.user);
+    }
     const bookings = await dbService.prisma.booking.findMany({
-      where: whereClause,
+      where,
       include: { contact: true },
       orderBy: { startTime: 'asc' }
     });
@@ -37,10 +71,15 @@ router.get('/agents/:agentId/bookings', async (req, res) => {
 });
 
 // GET /api/crm/agents/:agentId/availability
-router.get('/agents/:agentId/availability', async (req, res) => {
+router.get('/agents/:agentId/availability', authenticate, async (req, res) => {
   try {
+    if (!(await ensureAgentAccess(req, res))) return;
+    const where = { agentId: req.params.agentId };
+    if (req.user.role !== 'admin') {
+      where.agent = scopeAgentsForUser(req.user);
+    }
     const availability = await dbService.prisma.availability.findMany({
-      where: { agentId: req.params.agentId }
+      where
     });
     res.json(availability);
   } catch (err) {
@@ -50,18 +89,16 @@ router.get('/agents/:agentId/availability', async (req, res) => {
 });
 
 // PUT /api/crm/agents/:agentId/availability
-router.put('/agents/:agentId/availability', async (req, res) => {
+router.put('/agents/:agentId/availability', authenticate, async (req, res) => {
   try {
+    if (!(await ensureAgentAccess(req, res))) return;
     const { agentId } = req.params;
-    const availabilities = req.body; // Array of availability objects
+    const availabilities = req.body;
 
-    // Delete existing and insert new (simple sync)
-    await dbService.prisma.availability.deleteMany({
-      where: { agentId }
-    });
+    await dbService.prisma.availability.deleteMany({ where: { agentId } });
 
     const created = await Promise.all(
-      availabilities.map(a => 
+      availabilities.map(a =>
         dbService.prisma.availability.create({
           data: {
             agentId,
@@ -78,6 +115,22 @@ router.put('/agents/:agentId/availability', async (req, res) => {
   } catch (err) {
     console.error('[CRM API] Error updating availability:', err);
     res.status(500).json({ error: 'Failed to update availability' });
+  }
+});
+
+// GET /api/crm/my-agents - returns the agents the user has access to (admins get all)
+router.get('/my-agents', authenticate, async (req, res) => {
+  try {
+    const where = scopeAgentsForUser(req.user);
+    const agents = await dbService.prisma.agent.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      select: { id: true, name: true, language: true, systemPrompt: true },
+    });
+    res.json(agents);
+  } catch (err) {
+    console.error('[CRM API] Error fetching my-agents:', err);
+    res.status(500).json({ error: 'Failed to load agents' });
   }
 });
 

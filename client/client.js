@@ -137,8 +137,14 @@ startBtn.addEventListener('click', async () => {
                     audioQueue.push(audioBuffer);
                     playNextAudio();
                 } else if (msg.event === 'stop') {
-                    if (ws) ws.close();
-                    cleanup();
+                    // Wait until audio finishes playing before closing
+                    const checkAudio = setInterval(() => {
+                        if (audioQueue.length === 0 && activeSources.length === 0) {
+                            clearInterval(checkAudio);
+                            if (ws) ws.close();
+                            cleanup();
+                        }
+                    }, 200);
                 } else if (msg.event === 'tool_execution_request') {
                     console.log("Received custom tool execution request:", msg.toolName, msg.args);
                     // Mock executing the tool on the frontend

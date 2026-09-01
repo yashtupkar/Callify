@@ -3,14 +3,15 @@ const express = require('express');
 const http = require('http');
 const { WebSocketServer } = require('ws');
 const cors = require('cors');
+const cookieParser = require('cookie-parser');
 const { setupConnectionHandler } = require('./src/socket/connectionHandler');
 const { setupTelnyxConnectionHandler } = require('./src/socket/telnyxConnectionHandler');
 const app = express();
-app.use(cors());
+app.use(cors({ origin: true, credentials: true }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use(cookieParser());
 
-// Serve static frontend testing files from the client folder
 const path = require('path');
 app.use(express.static(path.join(__dirname, '../client')));
 
@@ -22,6 +23,9 @@ app.use('/api/phonenumbers', phoneNumbersRouter);
 
 const crmRouter = require('./src/routes/crm');
 app.use('/api/crm', crmRouter);
+
+const authRouter = require('./src/routes/auth');
+app.use('/api/auth', authRouter);
 
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', service: 'realtime-voice-service' });

@@ -32,6 +32,7 @@ model Agent {
   tools                  Json?
   enableEmailConfirmation    Boolean       @default(false)
   enableWhatsAppConfirmation Boolean       @default(false)
+  allowedEmails              String[]      @default([])
   createdAt              DateTime      @default(now())
   updatedAt              DateTime      @updatedAt
   
@@ -120,6 +121,21 @@ model Availability {
   isActive    Boolean   @default(true)
 
   agent       Agent     @relation(fields: [agentId], references: [id], onDelete: Cascade)
-  
+
   @@unique([agentId, dayOfWeek])
+}
+
+enum UserRole {
+  admin
+  user
+}
+
+model User {
+  id           String    @id @default(uuid())
+  email        String    @unique
+  passwordHash String
+  name         String?
+  role         UserRole  @default(user)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
 }

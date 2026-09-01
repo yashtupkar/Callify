@@ -118,14 +118,14 @@ class ToolExecutor {
         this.endConversation();
       };
 
-      // End immediately after final speech, with a 1s grace buffer
+      // End immediately after final speech, with a 5s grace buffer to ensure audio finishes playing on phone channels
       this.tts.once('utterance_complete', () => {
-        setTimeout(doEnd, 1000);
+        setTimeout(doEnd, 5000);
       });
 
       // Fallback: if TTS never fires (e.g. agent ended silently), 
-      // force-end after 6 seconds so the call doesn't hang open
-      setTimeout(doEnd, 6000);
+      // force-end after 10 seconds so the call doesn't hang open
+      setTimeout(doEnd, 10000);
       return;
     }
     

@@ -10,6 +10,7 @@ export default function AgentBuilderChat({ config, setConfig, onSave }) {
   ]);
   const [input, setInput] = useState('');
   const [isTyping, setIsTyping] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   const scrollRef = useRef(null);
 
   useEffect(() => {
@@ -56,6 +57,16 @@ export default function AgentBuilderChat({ config, setConfig, onSave }) {
     }
   };
 
+  const handleSaveClick = async () => {
+    if (isSaving) return;
+    setIsSaving(true);
+    try {
+      await onSave();
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   return (
     <div className="flex flex-col h-full bg-zinc-950 border-r border-border min-w-0 flex-1">
       <div className="p-4 border-b border-border flex justify-between items-center bg-card shrink-0">
@@ -64,8 +75,9 @@ export default function AgentBuilderChat({ config, setConfig, onSave }) {
           Agent Builder
         </h1>
         <div className="flex gap-2">
-          <Button onClick={onSave} size="sm" className="gap-2">
-            Save Agent
+          <Button onClick={handleSaveClick} size="sm" className="gap-2" disabled={isSaving}>
+            {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+            {isSaving ? 'Saving…' : 'Save Agent'}
           </Button>
         </div>
       </div>

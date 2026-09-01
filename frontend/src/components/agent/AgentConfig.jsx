@@ -1,9 +1,8 @@
 import { useEffect, useState } from 'react';
 import axios from 'axios';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Save, Trash2, Plus, X, ChevronDown, ChevronUp, Webhook, Globe, Sparkles } from 'lucide-react';
+import { Save, Trash2, Plus, X, ChevronDown, ChevronUp, Webhook, Globe, Sparkles, Loader2, BarChart3 } from 'lucide-react';
 import { API_AGENTS } from '../../lib/constants';
 
 const TOOL_TYPE_LABELS = {
@@ -73,7 +72,10 @@ export default function AgentConfig({
   agents,
   onSave,
   onDelete,
-  onPhoneAssign
+  onPhoneAssign,
+  hideHeader = false,
+  onGoToCRM = null,
+  isAdmin = true,
 }) {
   const [dataFieldInput, setDataFieldInput] = useState('');
   const [expandedToolIdx, setExpandedToolIdx] = useState(null);
@@ -245,24 +247,48 @@ export default function AgentConfig({
     }
   };
 
-  return (
-    <div className="flex-1 flex flex-col border-r border-border bg-background min-w-0">
-      {/* Header */}
-      <div className="p-4 border-b border-border flex justify-between items-center bg-card shrink-0">
-        <h1 className="text-xl font-bold">Configure Agent</h1>
-        <div className="flex gap-2">
-          {activeAgentId && (
-            <Button onClick={onDelete} variant="destructive" size="sm" className="gap-2">
-              <Trash2 className="w-4 h-4" /> Delete
-            </Button>
-          )}
-          <Button onClick={onSave} size="sm" className="gap-2">
-            <Save className="w-4 h-4" /> Save
-          </Button>
-        </div>
-      </div>
+  const [isSaving, setIsSaving] = useState(false);
 
-      <ScrollArea className="flex-1 p-6">
+  const handleSave = async () => {
+    if (isSaving) return;
+    setIsSaving(true);
+    try {
+      await onSave();
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!confirm('Delete this agent? This cannot be undone.')) return;
+    await onDelete();
+  };
+
+  return (
+    <div className="flex flex-col bg-background min-w-0 h-full overflow-hidden border-r border-border">
+      {!hideHeader && (
+        <div className="p-4 border-b border-border flex justify-between items-center bg-card shrink-0">
+          <h1 className="text-xl font-bold">Configure Agent</h1>
+          <div className="flex gap-2">
+            {activeAgentId && onGoToCRM && (
+              <Button onClick={onGoToCRM} variant="outline" size="sm" className="gap-2">
+                <BarChart3 className="w-4 h-4" /> CRM Dashboard
+              </Button>
+            )}
+            {activeAgentId && (
+              <Button onClick={handleDelete} variant="destructive" size="sm" className="gap-2" disabled={isSaving}>
+                <Trash2 className="w-4 h-4" /> Delete
+              </Button>
+            )}
+            <Button onClick={handleSave} size="sm" className="gap-2" disabled={isSaving}>
+              {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+              {isSaving ? 'Saving…' : 'Save'}
+            </Button>
+          </div>
+        </div>
+      )}
+
+      <div className="flex-1 min-h-0 overflow-y-auto p-6 scrollbar-thin">
         <div className="max-w-2xl space-y-6">
 
           {/* Agent Name */}
@@ -788,8 +814,167 @@ export default function AgentConfig({
               </div>
             </div>
           )}
+
+          {/* Allowed CRM Users (admin only) */}
+          {activeAgentId && isAdmin && (
+            <AllowedUsersSection
+              agentId={activeAgentId}
+              initialEmails={Array.isArray(config.allowedEmails) ? config.allowedEmails : []}
+              onUpdate={(emails) => setConfig(prev => ({ ...prev, allowedEmails: emails }))}
+            />
+          )}
         </div>
-      </ScrollArea>
+      </div>
+    </div>
+  );
+}
+
+function AllowedUsersSection({ agentId, initialEmails, onUpdate }) {
+  const [emails, setEmails] = useState(initialEmails);
+  const [input, setInput] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [credentials, setCredentials] = useState(null); // array of { email, tempPassword }
+  const [resetting, setResetting] = useState(null);
+
+  useEffect(() => { setEmails(initialEmails); }, [initialEmails.join('|')]);
+
+  const addEmail = () => {
+    const v = input.trim().toLowerCase();
+    if (!v || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) return;
+    if (emails.includes(v)) { setInput(''); return; }
+    const next = [...emails, v];
+    setEmails(next);
+    setInput('');
+  };
+
+  const removeEmail = (email) => {
+    const next = emails.filter(e => e !== email);
+    setEmails(next);
+  };
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      const res = await axios.put(`${API_AGENTS}/${agentId}/allowed-emails`, { emails });
+      onUpdate(res.data.allowedEmails);
+      if (Array.isArray(res.data.createdCredentials) && res.data.createdCredentials.length > 0) {
+        setCredentials(res.data.createdCredentials);
+      }
+    } catch (err) {
+      console.error('Failed to save allowed emails', err);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const resetPassword = async (email) => {
+    setResetting(email);
+    try {
+      const res = await axios.post(`${API_AGENTS}/${agentId}/allowed-emails/${encodeURIComponent(email)}/reset-password`);
+      setCredentials([{ email: res.data.email, tempPassword: res.data.tempPassword }]);
+    } catch (err) {
+      console.error('Failed to reset password', err);
+      alert(err.response?.data?.error || 'Failed to reset password');
+    } finally {
+      setResetting(null);
+    }
+  };
+
+  return (
+    <div className="space-y-3 pt-4 border-t border-border">
+      <div>
+        <label className="text-sm font-medium">Allowed CRM Users</label>
+        <p className="text-xs text-zinc-500 mt-0.5">
+          Invite users to view this agent's CRM data. New users get a temporary password — share it with them so they can sign in and change it.
+        </p>
+      </div>
+      <div className="flex flex-wrap gap-2 min-h-[32px]">
+        {emails.length === 0 ? (
+          <span className="text-xs text-zinc-500 italic">No invited users yet</span>
+        ) : (
+          emails.map(email => (
+            <span
+              key={email}
+              className="inline-flex items-center gap-1.5 pl-2.5 pr-1 py-1 rounded-full bg-foreground/10 text-foreground text-xs font-medium border border-border"
+            >
+              {email}
+              <button
+                onClick={() => resetPassword(email)}
+                disabled={resetting === email}
+                className="ml-1 px-1.5 py-0.5 rounded hover:bg-foreground/10 text-[10px] font-semibold uppercase tracking-wide disabled:opacity-50"
+                title="Reset password for this user"
+              >
+                {resetting === email ? '…' : 'Reset'}
+              </button>
+              <button
+                onClick={() => removeEmail(email)}
+                className="p-0.5 hover:text-destructive transition-colors"
+                aria-label={`Remove ${email}`}
+              >
+                <X className="w-3 h-3" />
+              </button>
+            </span>
+          ))
+        )}
+      </div>
+      <div className="flex gap-2">
+        <Input
+          type="email"
+          value={input}
+          onChange={e => setInput(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addEmail(); } }}
+          placeholder="user@example.com"
+          className="bg-card"
+        />
+        <Button onClick={addEmail} variant="outline" size="sm">Add</Button>
+        <Button onClick={save} size="sm" disabled={saving} className="gap-1">
+          {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+          {saving ? 'Saving…' : 'Save Users'}
+        </Button>
+      </div>
+
+      <CredentialsDialog credentials={credentials} onClose={() => setCredentials(null)} />
+    </div>
+  );
+}
+
+function CredentialsDialog({ credentials, onClose }) {
+  if (!credentials || credentials.length === 0) return null;
+  const text = credentials.map(c => `${c.email}  /  ${c.tempPassword}`).join('\n');
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      // ignore
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm" onClick={onClose}>
+      <div className="bg-card border border-border rounded-xl shadow-2xl p-6 w-full max-w-md mx-4" onClick={e => e.stopPropagation()}>
+        <h3 className="text-lg font-semibold">Share these credentials</h3>
+        <p className="text-xs text-muted-foreground mt-1">
+          New user accounts were created. Send these credentials to the user — they'll be prompted to change the password after signing in.
+        </p>
+        <div className="mt-4 space-y-2">
+          {credentials.map(c => (
+            <div key={c.email} className="flex items-center justify-between gap-2 rounded-md border border-border bg-background px-3 py-2">
+              <div className="min-w-0">
+                <p className="text-sm font-medium truncate">{c.email}</p>
+                <p className="text-xs text-muted-foreground font-mono">Password: {c.tempPassword}</p>
+              </div>
+              <Button size="sm" variant="ghost" onClick={() => navigator.clipboard.writeText(`${c.email}  /  ${c.tempPassword}`)}>
+                Copy
+              </Button>
+            </div>
+          ))}
+        </div>
+        <div className="mt-5 flex justify-end gap-2">
+          <Button variant="outline" size="sm" onClick={copy}>Copy all</Button>
+          <Button size="sm" onClick={onClose}>Done</Button>
+        </div>
+      </div>
     </div>
   );
 }

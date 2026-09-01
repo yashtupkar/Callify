@@ -7,7 +7,6 @@ import { useVoiceSession } from '../hooks/useVoiceSession';
 import AgentSidebar from '../components/agent/AgentSidebar';
 import AgentConfig from '../components/agent/AgentConfig';
 import AgentBuilderChat from '../components/agent/AgentBuilderChat';
-import CrmDashboard from '../components/agent/CrmDashboard';
 import TestInterface from '../components/agent/TestInterface';
 import AnalyticsModal from '../components/modals/AnalyticsModal';
 import PhoneNumberModal from '../components/modals/PhoneNumberModal';
@@ -52,24 +51,21 @@ export default function AgentStudioPage() {
   const { agentId } = useParams();
   const navigate = useNavigate();
 
-  // ── Voice session ──────────────────────────────────────────────────────────
   const {
     isConnected, isAgentSpeaking, transcript, usage, cost,
     startSession, endSession, sendTextMessage
   } = useVoiceSession(WS_URL);
 
-  // ── Data state ─────────────────────────────────────────────────────────────
   const [agents, setAgents] = useState([]);
   const [phoneNumbers, setPhoneNumbers] = useState([]);
   const [config, setConfig] = useState(EMPTY_CONFIG);
   const [customTools, setCustomTools] = useState([]);
 
-  // ── UI state ───────────────────────────────────────────────────────────────
   const [showPhoneDialog, setShowPhoneDialog] = useState(false);
   const [showAnalytics, setShowAnalytics] = useState(false);
-  const [viewMode, setViewMode] = useState('chat'); // 'chat' | 'config' | 'crm'
+  const [viewMode, setViewMode] = useState('chat'); // 'chat' | 'config'
+  const [isSaving, setIsSaving] = useState(false);
 
-  // ── Fetch agents ───────────────────────────────────────────────────────────
   const fetchAgents = useCallback(async () => {
     try {
       const res = await axios.get(API_AGENTS);
@@ -93,14 +89,12 @@ export default function AgentStudioPage() {
     fetchPhoneNumbers();
   }, [fetchAgents, fetchPhoneNumbers]);
 
-  // ── Sync URL param → selected agent ───────────────────────────────────────
   useEffect(() => {
     if (!agentId || agents.length === 0) return;
     const found = agents.find(a => a.id === agentId);
     if (found) applyAgentToForm(found);
   }, [agentId, agents]);
 
-  // ── Agent form helpers ─────────────────────────────────────────────────────
   function applyAgentToForm(agent) {
     let toolsArr = [];
     let parsedCustomTools = [];
@@ -108,11 +102,8 @@ export default function AgentStudioPage() {
       if (typeof agent.tools === 'object' && !Array.isArray(agent.tools)) {
         if (Array.isArray(agent.tools.dataToCollect)) toolsArr = agent.tools.dataToCollect;
         if (Array.isArray(agent.tools.customTools)) {
-          // Restore raw tool configs (type, webhookUrl, method, headers, parameters[])
           parsedCustomTools = agent.tools.customTools.map(t => {
-            // If already in raw format (has .parameters as array), use as-is
             if (Array.isArray(t.parameters)) return t;
-            // Legacy: was saved as OpenAI schema — reconstruct best-effort
             const fn = t.function || t;
             const props = fn.parameters?.properties || {};
             const required = fn.parameters?.required || [];
@@ -147,6 +138,7 @@ export default function AgentStudioPage() {
       dataToCollect: toolsArr,
       enableWhatsAppConfirmation: !!agent.enableWhatsAppConfirmation,
       enableEmailConfirmation: !!agent.enableEmailConfirmation,
+      allowedEmails: Array.isArray(agent.allowedEmails) ? agent.allowedEmails : [],
     });
     setCustomTools(parsedCustomTools);
   }
@@ -160,12 +152,9 @@ export default function AgentStudioPage() {
     setConfig(EMPTY_CONFIG);
     setCustomTools([]);
     setViewMode('chat');
-  };
+  }
 
-  // ── Save / delete ──────────────────────────────────────────────────────────
   const saveAgent = async () => {
-    // Save raw tool configs (preserving type, webhookUrl, method, headers)
-    // so webhook tools are not downgraded to frontend tools on reload.
     const rawTools = customTools.filter(t => t.name?.trim());
     const payload = {
       name: config.name,
@@ -177,10 +166,8 @@ export default function AgentStudioPage() {
       timezone: config.timezone,
       enableWhatsAppConfirmation: config.enableWhatsAppConfirmation,
       enableEmailConfirmation: config.enableEmailConfirmation,
-      tools: {
-        dataToCollect: config.dataToCollect,
-        customTools: rawTools
-      }
+      allowedEmails: Array.isArray(config.allowedEmails) ? config.allowedEmails : [],
+      tools: { dataToCollect: config.dataToCollect, customTools: rawTools }
     };
     try {
       if (agentId) {
@@ -195,8 +182,15 @@ export default function AgentStudioPage() {
     }
   };
 
+  const wrappedSave = async () => {
+    if (isSaving) return;
+    setIsSaving(true);
+    try { await saveAgent(); } finally { setIsSaving(false); }
+  };
+
   const deleteAgent = async () => {
     if (!agentId) return;
+    if (!confirm('Delete this agent? This cannot be undone.')) return;
     try {
       await axios.delete(`${API_AGENTS}/${agentId}`);
       navigate('/agents');
@@ -208,10 +202,7 @@ export default function AgentStudioPage() {
     }
   };
 
-  // ── Test call ──────────────────────────────────────────────────────────────
   const handleStartCall = () => {
-    // Send raw tool configs (not stripped OpenAI schemas) so the server can
-    // distinguish webhook tools (with type/webhookUrl) from frontend tools.
     const rawTools = customTools.filter(t => t.name?.trim());
     startSession({
       agentId,
@@ -226,14 +217,12 @@ export default function AgentStudioPage() {
     });
   };
 
-
-  // Show analytics when call ends
   useEffect(() => {
     if (!isConnected && cost) setShowAnalytics(true);
   }, [isConnected, cost]);
 
   return (
-    <div className="min-h-screen bg-background text-foreground flex overflow-hidden">
+    <div className="h-screen w-full bg-background text-foreground flex overflow-hidden">
       {/* LEFT: Agent List */}
       <AgentSidebar
         agents={agents}
@@ -243,9 +232,9 @@ export default function AgentStudioPage() {
         onOpenPhoneDialog={() => setShowPhoneDialog(true)}
       />
 
-      {/* CENTER: Configuration or CRM */}
-      <div className="flex-1 flex flex-col min-w-[500px]">
-        <div className="flex border-b border-border bg-card p-2 justify-center space-x-2">
+      {/* CENTER: Builder or Configuration */}
+      <div className="flex-1 flex flex-col min-w-[500px] h-screen">
+        <div className="flex border-b border-border bg-card p-2 justify-center space-x-2 shrink-0">
           <button
             onClick={() => setViewMode('chat')}
             className={`px-4 py-1.5 text-sm font-medium rounded-md transition-colors ${
@@ -262,49 +251,32 @@ export default function AgentStudioPage() {
           >
             Advanced Settings
           </button>
-          {agentId && (
-            <button
-              onClick={() => setViewMode('crm')}
-              className={`px-4 py-1.5 text-sm font-medium rounded-md transition-colors ${
-                viewMode === 'crm' ? 'bg-primary text-primary-foreground' : 'bg-transparent text-muted-foreground hover:bg-white/5 hover:text-foreground'
-              }`}
-            >
-              CRM Dashboard
-            </button>
+        </div>
+
+        <div className="flex-1 min-h-0 overflow-hidden">
+          {!agentId ? (
+            <AgentBuilderChat config={config} setConfig={setConfig} onSave={wrappedSave} />
+          ) : viewMode === 'chat' ? (
+            <AgentBuilderChat config={config} setConfig={setConfig} onSave={wrappedSave} />
+          ) : (
+            <AgentConfig
+              config={config}
+              setConfig={setConfig}
+              customTools={customTools}
+              setCustomTools={setCustomTools}
+              activeAgentId={agentId || null}
+              phoneNumbers={phoneNumbers}
+              agents={agents}
+              onSave={wrappedSave}
+              onDelete={deleteAgent}
+              onPhoneAssign={fetchPhoneNumbers}
+              onGoToCRM={() => navigate(`/crm/agent/${agentId}`)}
+            />
           )}
         </div>
-        
-        {!agentId ? (
-          <AgentBuilderChat
-            config={config}
-            setConfig={setConfig}
-            onSave={saveAgent}
-          />
-        ) : viewMode === 'chat' ? (
-          <AgentBuilderChat
-            config={config}
-            setConfig={setConfig}
-            onSave={saveAgent}
-          />
-        ) : viewMode === 'config' ? (
-          <AgentConfig
-            config={config}
-            setConfig={setConfig}
-            customTools={customTools}
-            setCustomTools={setCustomTools}
-            activeAgentId={agentId || null}
-            phoneNumbers={phoneNumbers}
-            agents={agents}
-            onSave={saveAgent}
-            onDelete={deleteAgent}
-            onPhoneAssign={fetchPhoneNumbers}
-          />
-        ) : (
-          <CrmDashboard agentId={agentId} />
-        )}
       </div>
 
-      {/* RIGHT: Test Interface */}
+      {/* RIGHT: Test Interface (fixed height) */}
       <TestInterface
         agentName={config.name}
         isConnected={isConnected}
@@ -315,7 +287,6 @@ export default function AgentStudioPage() {
         onSendText={sendTextMessage}
       />
 
-      {/* Modals */}
       <AnalyticsModal
         open={showAnalytics}
         onClose={() => setShowAnalytics(false)}

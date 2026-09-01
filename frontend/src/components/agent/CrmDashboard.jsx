@@ -52,7 +52,7 @@ export default function CrmDashboard({ agentId }) {
   }
 
   return (
-    <div className="flex-1 flex flex-col h-full bg-background border-r border-border min-w-[500px]">
+    <div className="flex flex-col h-full bg-background min-w-0">
       <div className="flex items-center px-6 py-4 border-b border-border bg-card">
         <h2 className="text-xl font-semibold flex-1">CRM Dashboard</h2>
       </div>

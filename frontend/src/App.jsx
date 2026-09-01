@@ -1,15 +1,57 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import AgentStudioPage from './pages/AgentStudioPage';
+import { AuthProvider, useAuth } from '@/hooks/useAuth';
+import AgentStudioPage from '@/pages/AgentStudioPage';
+import LoginPage from '@/pages/LoginPage';
+import RegisterPage from '@/pages/RegisterPage';
+import CrmLayout from '@/layouts/CrmLayout';
+import RequireAuth from '@/layouts/RequireAuth';
+import RequireAdmin from '@/layouts/RequireAdmin';
+import CrmDashboardPage from '@/pages/crm/CrmDashboardPage';
+import CrmCallsPage from '@/pages/crm/CrmCallsPage';
+import CrmContactsPage from '@/pages/crm/CrmContactsPage';
+import CrmCalendarPage from '@/pages/crm/CrmCalendarPage';
+import CrmAgentsListPage from '@/pages/crm/CrmAgentsListPage';
+import CrmAgentConfigPage from '@/pages/crm/CrmAgentConfigPage';
+
+function RootRedirect() {
+  const { user, isAuthenticated, loading } = useAuth();
+  if (loading) return null;
+  if (!isAuthenticated) return <Navigate to="/login" replace />;
+  return <Navigate to={user?.role === 'admin' ? '/agents' : '/crm/dashboard'} replace />;
+}
 
 function App() {
   return (
-    <BrowserRouter>
-      <Routes>
-        <Route path="/" element={<Navigate to="/agents" replace />} />
-        <Route path="/agents" element={<AgentStudioPage />} />
-        <Route path="/agents/:agentId" element={<AgentStudioPage />} />
-      </Routes>
-    </BrowserRouter>
+    <AuthProvider>
+      <BrowserRouter>
+        <Routes>
+          <Route path="/" element={<RootRedirect />} />
+          <Route path="/login" element={<LoginPage />} />
+          <Route path="/register" element={<RegisterPage />} />
+
+          {/* CRM (both admin and invited users) */}
+          <Route element={<RequireAuth />}>
+            <Route path="/crm" element={<CrmLayout />}>
+              <Route index element={<Navigate to="dashboard" replace />} />
+              <Route path="dashboard" element={<CrmDashboardPage />} />
+              <Route path="calls" element={<CrmCallsPage />} />
+              <Route path="contacts" element={<CrmContactsPage />} />
+              <Route path="calendar" element={<CrmCalendarPage />} />
+              <Route path="agents" element={<CrmAgentsListPage />} />
+              <Route path="agent/:agentId" element={<CrmAgentConfigPage />} />
+            </Route>
+          </Route>
+
+          {/* Admin-only: agent studio */}
+          <Route element={<RequireAdmin />}>
+            <Route path="/agents" element={<AgentStudioPage />} />
+            <Route path="/agents/:agentId" element={<AgentStudioPage />} />
+          </Route>
+
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </BrowserRouter>
+    </AuthProvider>
   );
 }
 
