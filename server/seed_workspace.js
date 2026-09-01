@@ -25,26 +25,26 @@ async function main() {
     console.log(`Found Default Workspace: ${defaultWorkspace.id}`);
   }
 
-  // 2. Update Agents
-  const agentsRes = await prisma.agent.updateMany({
-    where: { workspaceId: null },
-    data: { workspaceId: defaultWorkspace.id, type: 'general' }
-  });
-  console.log(`Updated ${agentsRes.count} agents`);
+  // // 2. Update Agents
+  // const agentsRes = await prisma.agent.updateMany({
+  //   where: { workspaceId: null },
+  //   data: { workspaceId: defaultWorkspace.id, type: 'general' }
+  // });
+  // console.log(`Updated ${agentsRes.count} agents`);
 
-  // 3. Update Phone Numbers
-  const phonesRes = await prisma.phoneNumber.updateMany({
-    where: { workspaceId: null },
-    data: { workspaceId: defaultWorkspace.id }
-  });
-  console.log(`Updated ${phonesRes.count} phone numbers`);
+  // // 3. Update Phone Numbers
+  // const phonesRes = await prisma.phoneNumber.updateMany({
+  //   where: { workspaceId: null },
+  //   data: { workspaceId: defaultWorkspace.id }
+  // });
+  // console.log(`Updated ${phonesRes.count} phone numbers`);
 
-  // 4. Update Call Sessions
-  const sessionsRes = await prisma.callSession.updateMany({
-    where: { workspaceId: null },
-    data: { workspaceId: defaultWorkspace.id }
-  });
-  console.log(`Updated ${sessionsRes.count} call sessions`);
+  // // 4. Update Call Sessions
+  // const sessionsRes = await prisma.callSession.updateMany({
+  //   where: { workspaceId: null },
+  //   data: { workspaceId: defaultWorkspace.id }
+  // });
+  // console.log(`Updated ${sessionsRes.count} call sessions`);
 }
 
 main()

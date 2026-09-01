@@ -10,63 +10,47 @@ const { ttsCache } = require('../integrations/tts/ttsCache');
 const { SarvamTTSProvider } = require('../integrations/tts/sarvamTtsProvider');
 const { ToolRegistry } = require('../tools/ToolRegistry');
 const { ToolExecutor } = require('../tools/ToolExecutor');
-const { buildAgentPrompt } = require('../modules/prompt/promptBuilder');
+const { buildAgentPrompt, DEFAULT_ASSISTANT_NAME } = require('../modules/prompt/promptBuilder');
 const { buildToolSchema } = require('../tools/WebhookToolExecutor');
+const { CallStateManager } = require('./CallStateManager');
 
-// A few natural variants per situation so the same line isn't replayed on every call.
-const FILLERS = {
-  check_availability: [
-    "Let me check the schedule for that...",
-    "One sec, let me pull up the calendar...",
-    "Let's see what we've got open...",
-  ],
-  book_appointment: [
-    "Alright, let me get that booked for you...",
-    "Okay, locking that in now...",
-    "Give me just a second to get this booked...",
-  ],
-  save_collected_data: [
-    "Got it, one sec while I save that...",
-    "Perfect, let me note that down...",
-    "Okay, saving that now...",
-  ],
-  generic: [
-    "One moment...",
-    "Just a sec...",
-    "Let me look into that for you...",
-  ],
+// Maps a base language code to a factory for the TTS provider that should
+// handle it. Anything not listed falls through to the default provider
+// chosen from TTS_PROVIDER (ElevenLabs/Fish). Add a new language's provider
+// here rather than hardcoding another if-branch in startConversation.
+const LANGUAGE_TTS_PROVIDERS = {
+  hi: () => new SarvamTTSProvider(),
 };
-
-function pickFiller(key) {
-  const list = FILLERS[key] || FILLERS.generic;
-  return list[Math.floor(Math.random() * list.length)] + " ";
-}
 
 class ConversationManager extends EventEmitter {
   constructor(channelAdapter) {
     super();
     this.channel = channelAdapter;
-    
+
     // Explicit State Machine
     this.state = 'CREATED'; // CREATED, CONNECTING, CONNECTED, LISTENING, THINKING, SPEAKING, INTERRUPTED, ENDING, ERROR
-    
+
     this.stt = new STTService();
     this.llm = new LLMService();
-    
+
     // Choose TTS provider based on env var, defaulting to ElevenLabs
     const ttsProviderStr = (process.env.TTS_PROVIDER || '').trim().toLowerCase();
-    
+
     if (ttsProviderStr === 'fish') {
       this.tts = new FishAudioTTSProvider({ sampleRate: 16000 });
     } else {
       this.tts = new TTSProvider();
     }
-    
+
     this.usageTracker = new UsageTracker();
     this.costCalculator = new CostCalculator();
-    
+
     this.transcript = [];
     this.registry = new ToolRegistry();
+    
+    // Will be initialized in startConversation
+    this.stateManager = null;
+
     this.toolExecutor = new ToolExecutor({
       registry: this.registry,
       tts: this.tts,
@@ -74,19 +58,24 @@ class ConversationManager extends EventEmitter {
       transcript: this.transcript,
       sendToClient: this.sendToClient.bind(this),
       endConversation: this.endConversation.bind(this),
-      usageTracker: this.usageTracker
+      usageTracker: this.usageTracker,
+      getRecentTranscript: this.getRecentTranscript.bind(this),
+      getStateManager: () => this.stateManager
     });
 
     this.userSpeechBuffer = "";
     this.silenceTimeout = null;
-    // NOTE: 150ms was too aggressive — it treats a natural mid-sentence pause
-    // (e.g. "my email is... uh, yash at gmail dot com") as the end of the turn,
-    // causing the agent to respond mid-thought and feel like it's interrupting.
-    // 450-600ms gives a caller room to breathe without adding noticeable lag.
-    // If you have real VAD/endpointing available upstream, prefer that over a
-    // fixed timeout entirely.
     this.TURN_TIMEOUT_MS = 500;
-    
+
+    // Active call's language (BCP-47), set in startConversation. Drives
+    // filler-line language selection and TTS provider routing.
+    this.language = 'en-US';
+
+    // Caps how much transcript history we actually send to the LLM each
+    // turn. The full transcript is still kept in memory and saved to the DB
+    // in full at the end of the call.
+    this.MAX_CONTEXT_MESSAGES = 40;
+
     this.setupListeners();
     this.setupChannelListeners();
   }
@@ -121,22 +110,22 @@ class ConversationManager extends EventEmitter {
     this.stt.on('transcript', (text, isFinal) => {
       if (isFinal && text.trim()) {
         this.userSpeechBuffer += (this.userSpeechBuffer ? " " : "") + text.trim();
-        
+
         // Send the updated buffer to the client, but keep isFinal false so it stays in one bubble
         this.sendToClient({ event: 'transcript', data: { text: this.userSpeechBuffer, isFinal: false, speaker: 'user' } });
-        
+
         // Clear any existing timeout
         if (this.silenceTimeout) {
           clearTimeout(this.silenceTimeout);
         }
-        
+
         // Start a new timeout waiting for the user to continue
         this.silenceTimeout = setTimeout(() => {
           if (this.userSpeechBuffer.trim()) {
             const finalText = this.userSpeechBuffer.trim();
             // Now finalize the bubble on the UI
             this.sendToClient({ event: 'transcript', data: { text: finalText, isFinal: true, speaker: 'user' } });
-            
+
             this.handleUserUtterance(finalText);
             this.userSpeechBuffer = "";
           }
@@ -153,17 +142,24 @@ class ConversationManager extends EventEmitter {
       if (this.silenceTimeout) {
         clearTimeout(this.silenceTimeout);
       }
-      
+
       console.log('[ConversationManager] User started speaking. Interrupting agent.');
       this.tts.interrupt();
+      
+      // Aggressive LLM abort on speech start
       if (this.llm.abort) {
         this.llm.abort();
       }
       
+      // Alert the tool executor that we've been interrupted
+      if (this.toolExecutor.abortCurrentExecution) {
+        this.toolExecutor.abortCurrentExecution();
+      }
+
       if (this.channel && typeof this.channel.clearAudio === 'function') {
         this.channel.clearAudio();
       }
-      
+
       this.sendToClient({ event: 'clear_audio' });
     });
 
@@ -191,6 +187,7 @@ class ConversationManager extends EventEmitter {
     });
 
     this.llm.on('tool_call', (toolName, args, preamble, llmToolCallId) => {
+      // Filler logic moved entirely to ToolExecutor
       this.toolExecutor.handle(toolName, args, preamble, llmToolCallId);
     });
 
@@ -203,24 +200,35 @@ class ConversationManager extends EventEmitter {
     console.log('[ConversationManager] Starting conversation with config:', config);
     this.isCallActive = true;
     this.toolExecutor.agentId = config.agentId;
-    
-    // Dynamic TTS provider selection based on language
+
     const language = config.language || 'en-US';
-    if (language === 'hi-IN' || language === 'hi') {
-      console.log('[ConversationManager] Hindi selected, overriding TTS with Sarvam AI');
-      this.tts = new SarvamTTSProvider();
+    this.language = language;
+    const baseLang = language.split('-')[0].toLowerCase();
+
+    if (LANGUAGE_TTS_PROVIDERS[baseLang]) {
+      console.log(`[ConversationManager] ${baseLang} selected, overriding TTS provider`);
+      this.tts = LANGUAGE_TTS_PROVIDERS[baseLang]();
       this.setupTtsListeners();
       if (typeof this.tts.setLanguage === 'function') {
-        this.tts.setLanguage('hi-IN');
+        this.tts.setLanguage(language);
       }
+      this.toolExecutor.tts = this.tts;
     }
 
     // Process Voice Customization
-    if (config.voiceId) {
+    if (config.voiceId && config.voiceId !== 'default') {
       if (typeof this.tts.setVoiceId === 'function') {
         this.tts.setVoiceId(config.voiceId);
       }
     }
+    
+    // Initialize CallStateManager
+    this.stateManager = new CallStateManager({
+      timezone: config.timezone,
+      language: this.language,
+      businessName: config.businessName,
+      dataFields: config.dataToCollect || []
+    });
 
     // Process Custom Tools from browser session config
     if (config.customTools && Array.isArray(config.customTools)) {
@@ -235,46 +243,28 @@ class ConversationManager extends EventEmitter {
         }
       }
     }
-    
-    // -----------------------------------------------------------------
-    // PROMPT ASSEMBLY
-    // Two layers, always combined — never one-or-the-other:
-    //   1. CORE_VOICE_PERSONA   -> constant, defines HOW the agent talks
-    //   2. rolePrompt           -> variable, defines WHO the agent is /
-    //                              WHAT it's here to do (portal prompt,
-    //                              falling back to the dental default)
-    
-    // Fetch availability to inject into the prompt
-    let availability = [];
-    if (config.agentId) {
-      try {
-        availability = await dbService.prisma.availability.findMany({
-          where: { agentId: config.agentId }
-        });
-      } catch (e) {
-        console.error('[ConversationManager] Failed to fetch agent availability for prompt:', e);
-      }
-    }
 
     // Build the dynamic prompt for the agent
-    const fullPrompt = buildAgentPrompt({ agent: config, timezone: config.timezone, availability });
-    
+    // No more DB fetching for bookings/availability — prompt is purely static
+    const fullPrompt = buildAgentPrompt({ agent: config, timezone: config.timezone });
+
     // Inject the built-in data collection tool via registry if needed
     if (config.dataToCollect && config.dataToCollect.length > 0) {
       this.registry.injectDataCollectionTool(config.dataToCollect);
     }
-    
+
     // Inject the internal CRM tools (availability, booking)
     this.registry.injectInternalCrmTools();
 
     this.llm.initialize(fullPrompt);
     this.stt.connect(provider, language).catch(e => console.error('[ConversationManager] STT connect error:', e));
-    
+
     // Kick off the conversation with an instant greeting
-    const greeting = config.firstMessage || "Hi, thanks for calling! You’ve reached our reception desk. How can I help you today?";
+    const assistantName = config.assistantName || DEFAULT_ASSISTANT_NAME;
+    const greeting = config.firstMessage || `Hi, thanks for calling! This is ${assistantName}, you've reached our reception desk. How can I help you today?`;
     this.transcript.push({ role: 'assistant', content: greeting });
     this.sendToClient({ event: 'transcript', data: { text: greeting, isFinal: true, speaker: 'agent' } });
-    
+
     const providerName = (process.env.TTS_PROVIDER || '').trim().toLowerCase() === 'fish' ? 'fish' : 'elevenlabs';
     const voiceId = config.voiceId || this.tts.voiceId || 'default';
     const cacheKey = ttsCache.generateKey(providerName, voiceId, greeting);
@@ -300,20 +290,20 @@ class ConversationManager extends EventEmitter {
       console.log(`[ConversationManager] Cache miss for greeting. Generating and caching...`);
       let audioChunks = [];
       let interrupted = false;
-      
+
       const onAudio = (chunk) => {
         audioChunks.push(chunk);
       };
-      
+
       const onInterrupted = () => {
         interrupted = true;
       };
-      
+
       const onComplete = () => {
         this.tts.removeListener('audio', onAudio);
         this.tts.removeListener('utterance_interrupted', onInterrupted);
         this.tts.removeListener('utterance_complete', onComplete);
-        
+
         if (audioChunks.length > 0 && !interrupted) {
           ttsCache.set(cacheKey, Buffer.concat(audioChunks));
           console.log(`[ConversationManager] Saved greeting to cache.`);
@@ -321,11 +311,11 @@ class ConversationManager extends EventEmitter {
           console.log(`[ConversationManager] Greeting was interrupted, bypassing cache save.`);
         }
       };
-      
+
       this.tts.on('audio', onAudio);
       this.tts.once('utterance_interrupted', onInterrupted);
       this.tts.once('utterance_complete', onComplete);
-      
+
       this.tts.feedText(greeting);
       this.tts.flush();
     }
@@ -335,6 +325,14 @@ class ConversationManager extends EventEmitter {
     return this.registry.getAllSchemas();
   }
 
+  // Returns the slice of transcript actually sent to the LLM each turn.
+  // Keeps request size (and cost/latency) roughly flat on long calls while
+  // this.transcript itself still keeps everything for the DB save at the end.
+  getRecentTranscript() {
+    if (this.transcript.length <= this.MAX_CONTEXT_MESSAGES) return this.transcript;
+    return this.transcript.slice(-this.MAX_CONTEXT_MESSAGES);
+  }
+
   handleIncomingAudio(audioBuffer) {
     if (this.isCallActive) {
       this.stt.processAudio(audioBuffer);
@@ -342,22 +340,34 @@ class ConversationManager extends EventEmitter {
   }
 
   handleUserUtterance(text) {
+    if (!this.isCallActive) return;
+
     // Message Consolidation: Combine consecutive user messages to save token overhead
     if (this.transcript.length > 0) {
       const lastMsg = this.transcript[this.transcript.length - 1];
       if (lastMsg.role === 'user') {
         lastMsg.content += " " + text;
-        this.llm.generateResponse(this.transcript, this.getAllTools());
+        this.llm.generateResponse(
+          this.getRecentTranscript(), 
+          this.getAllTools(), 
+          'auto',
+          this.stateManager ? this.stateManager.getContextInjection() : null
+        );
         return;
       }
     }
     this.transcript.push({ role: 'user', content: text });
-    this.llm.generateResponse(this.transcript, this.getAllTools());
+    this.llm.generateResponse(
+      this.getRecentTranscript(), 
+      this.getAllTools(), 
+      'auto',
+      this.stateManager ? this.stateManager.getContextInjection() : null
+    );
   }
 
   handleFrontendToolResult(toolName, result, toolCallId) {
     console.log(`[ConversationManager] Received frontend result for ${toolName}:`, result);
-    
+
     // Find the latest tool call in the transcript (if toolCallId not provided)
     let targetId = toolCallId;
     if (!targetId && this.transcript.length > 0) {
@@ -374,26 +384,44 @@ class ConversationManager extends EventEmitter {
       content: JSON.stringify(result)
     });
     
+    // Update state manager based on tool result
+    if (this.stateManager) {
+      this.stateManager.onToolResult(toolName, result);
+    }
+
     // Generate the next response using the result
-    this.llm.generateResponse(this.transcript, this.getAllTools());
+    this.llm.generateResponse(
+      this.getRecentTranscript(), 
+      this.getAllTools(), 
+      'auto', 
+      this.stateManager ? this.stateManager.getContextInjection() : null
+    );
   }
 
   endConversation() {
     if (!this.isCallActive && this.state !== 'CONNECTING' && this.state !== 'CONNECTED') return;
-    
+
     console.log('[ConversationManager] Ending conversation.');
     this.state = 'ENDING';
     this.isCallActive = false;
+
+    // Prevent a pending silence timeout from firing after the call has
+    // already ended and trying to process a stale buffered utterance.
+    if (this.silenceTimeout) {
+      clearTimeout(this.silenceTimeout);
+      this.silenceTimeout = null;
+    }
+
     this.stt.disconnect();
     this.tts.interrupt();
 
     this.usageTracker.addSTTDuration(this.usageTracker.finalize().callDurationSeconds);
     const usage = this.usageTracker.usage;
     const cost = this.costCalculator.calculateCost(usage);
-    
+
     console.log('[ConversationManager] Final Usage:', usage);
     console.log('[ConversationManager] Estimated Cost:', cost);
-    
+
     this.sendToClient({
       type: 'usage.updated',
       usage: usage,
@@ -413,7 +441,7 @@ class ConversationManager extends EventEmitter {
       llmCompletionTokens: usage.llmCompletionTokens,
       ttsCharacters: usage.ttsCharacters,
       toolCalls: usage.toolCalls,
-      transcript: this.transcript // Saves full transcript array
+      transcript: this.transcript // Saves full transcript array (untrimmed)
     });
   }
 

@@ -18,18 +18,22 @@ model Workspace {
 }
 
 model Agent {
-  id             String        @id @default(uuid())
-  workspaceId    String
-  type           String        @default("general") // 'dental', 'general', etc.
-  name           String
-  systemPrompt   String
-  initialMessage String
-  voiceId        String?
-  language       String?       @default("en-US")
-  timezone       String?       @default("Asia/Kolkata")
-  tools          Json?
-  createdAt      DateTime      @default(now())
-  updatedAt      DateTime      @updatedAt
+  id                     String        @id @default(uuid())
+  workspaceId            String
+  type                   String        @default("general") // 'dental', 'general', etc.
+  name                   String
+  systemPrompt           String
+  conversationGuidelines String?
+  initialMessage         String
+  voiceId                String?
+  language               String?       @default("en-US")
+  timezone               String?       @default("Asia/Kolkata")
+  slotDuration           Int           @default(60)
+  tools                  Json?
+  enableEmailConfirmation    Boolean       @default(false)
+  enableWhatsAppConfirmation Boolean       @default(false)
+  createdAt              DateTime      @default(now())
+  updatedAt              DateTime      @updatedAt
   
   workspace      Workspace     @relation(fields: [workspaceId], references: [id])
   phoneNumbers   PhoneNumber[]
@@ -119,4 +123,3 @@ model Availability {
   
   @@unique([agentId, dayOfWeek])
 }
-

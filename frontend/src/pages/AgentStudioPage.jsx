@@ -6,12 +6,13 @@ import { useVoiceSession } from '../hooks/useVoiceSession';
 
 import AgentSidebar from '../components/agent/AgentSidebar';
 import AgentConfig from '../components/agent/AgentConfig';
+import AgentBuilderChat from '../components/agent/AgentBuilderChat';
 import CrmDashboard from '../components/agent/CrmDashboard';
 import TestInterface from '../components/agent/TestInterface';
 import AnalyticsModal from '../components/modals/AnalyticsModal';
 import PhoneNumberModal from '../components/modals/PhoneNumberModal';
 
-/** Converts the UI builder tool list → OpenAI-format schemas for saving/sending */
+/** Converts the UI builder tool list -> OpenAI-format schemas for saving/sending */
 export function buildToolSchemas(customTools = []) {
   return customTools
     .filter(t => t.name.trim())
@@ -37,11 +38,14 @@ export function buildToolSchemas(customTools = []) {
 const EMPTY_CONFIG = {
   name: '',
   systemPrompt: '',
+  conversationGuidelines: '',
   dataToCollect: [],
   voiceId: '',
   language: 'en-US',
   timezone: 'Asia/Kolkata',
-  initialMessage: "Hi, thanks for calling! How can I help you today?"
+  initialMessage: "Hi, thanks for calling! How can I help you today?",
+  enableWhatsAppConfirmation: false,
+  enableEmailConfirmation: false
 };
 
 export default function AgentStudioPage() {
@@ -63,7 +67,7 @@ export default function AgentStudioPage() {
   // ── UI state ───────────────────────────────────────────────────────────────
   const [showPhoneDialog, setShowPhoneDialog] = useState(false);
   const [showAnalytics, setShowAnalytics] = useState(false);
-  const [viewMode, setViewMode] = useState('config'); // 'config' | 'crm'
+  const [viewMode, setViewMode] = useState('chat'); // 'chat' | 'config' | 'crm'
 
   // ── Fetch agents ───────────────────────────────────────────────────────────
   const fetchAgents = useCallback(async () => {
@@ -135,11 +139,14 @@ export default function AgentStudioPage() {
     setConfig({
       name: agent.name,
       systemPrompt: agent.systemPrompt,
+      conversationGuidelines: agent.conversationGuidelines || '',
       initialMessage: agent.initialMessage,
       voiceId: agent.voiceId || '',
       language: agent.language || 'en-US',
       timezone: agent.timezone || 'Asia/Kolkata',
       dataToCollect: toolsArr,
+      enableWhatsAppConfirmation: !!agent.enableWhatsAppConfirmation,
+      enableEmailConfirmation: !!agent.enableEmailConfirmation,
     });
     setCustomTools(parsedCustomTools);
   }
@@ -152,7 +159,7 @@ export default function AgentStudioPage() {
     navigate('/agents');
     setConfig(EMPTY_CONFIG);
     setCustomTools([]);
-    setViewMode('config');
+    setViewMode('chat');
   };
 
   // ── Save / delete ──────────────────────────────────────────────────────────
@@ -163,10 +170,13 @@ export default function AgentStudioPage() {
     const payload = {
       name: config.name,
       systemPrompt: config.systemPrompt,
+      conversationGuidelines: config.conversationGuidelines,
       initialMessage: config.initialMessage,
       voiceId: config.voiceId,
       language: config.language,
       timezone: config.timezone,
+      enableWhatsAppConfirmation: config.enableWhatsAppConfirmation,
+      enableEmailConfirmation: config.enableEmailConfirmation,
       tools: {
         dataToCollect: config.dataToCollect,
         customTools: rawTools
@@ -206,6 +216,7 @@ export default function AgentStudioPage() {
     startSession({
       agentId,
       systemPrompt: config.systemPrompt,
+      conversationGuidelines: config.conversationGuidelines,
       dataToCollect: config.dataToCollect,
       voiceId: config.voiceId,
       language: config.language,
@@ -234,16 +245,24 @@ export default function AgentStudioPage() {
 
       {/* CENTER: Configuration or CRM */}
       <div className="flex-1 flex flex-col min-w-[500px]">
-        {agentId && (
-          <div className="flex border-b border-border bg-card p-2 justify-center space-x-2">
-            <button
-              onClick={() => setViewMode('config')}
-              className={`px-4 py-1.5 text-sm font-medium rounded-md transition-colors ${
-                viewMode === 'config' ? 'bg-primary text-primary-foreground' : 'bg-transparent text-muted-foreground hover:bg-white/5 hover:text-foreground'
-              }`}
-            >
-              Agent Configuration
-            </button>
+        <div className="flex border-b border-border bg-card p-2 justify-center space-x-2">
+          <button
+            onClick={() => setViewMode('chat')}
+            className={`px-4 py-1.5 text-sm font-medium rounded-md transition-colors ${
+              viewMode === 'chat' ? 'bg-primary text-primary-foreground' : 'bg-transparent text-muted-foreground hover:bg-white/5 hover:text-foreground'
+            }`}
+          >
+            Builder Chat
+          </button>
+          <button
+            onClick={() => setViewMode('config')}
+            className={`px-4 py-1.5 text-sm font-medium rounded-md transition-colors ${
+              viewMode === 'config' ? 'bg-primary text-primary-foreground' : 'bg-transparent text-muted-foreground hover:bg-white/5 hover:text-foreground'
+            }`}
+          >
+            Advanced Settings
+          </button>
+          {agentId && (
             <button
               onClick={() => setViewMode('crm')}
               className={`px-4 py-1.5 text-sm font-medium rounded-md transition-colors ${
@@ -252,10 +271,22 @@ export default function AgentStudioPage() {
             >
               CRM Dashboard
             </button>
-          </div>
-        )}
+          )}
+        </div>
         
-        {viewMode === 'config' || !agentId ? (
+        {!agentId ? (
+          <AgentBuilderChat
+            config={config}
+            setConfig={setConfig}
+            onSave={saveAgent}
+          />
+        ) : viewMode === 'chat' ? (
+          <AgentBuilderChat
+            config={config}
+            setConfig={setConfig}
+            onSave={saveAgent}
+          />
+        ) : viewMode === 'config' ? (
           <AgentConfig
             config={config}
             setConfig={setConfig}

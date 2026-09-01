@@ -1,9 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import axios from 'axios';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Save, Trash2, Plus, X, ChevronDown, ChevronUp, Webhook, Globe } from 'lucide-react';
+import { Save, Trash2, Plus, X, ChevronDown, ChevronUp, Webhook, Globe, Sparkles } from 'lucide-react';
+import { API_AGENTS } from '../../lib/constants';
 
 const TOOL_TYPE_LABELS = {
   frontend: { label: 'Frontend (JS)', icon: '⚡', desc: 'Your page handles the call' },
@@ -77,6 +78,77 @@ export default function AgentConfig({
   const [dataFieldInput, setDataFieldInput] = useState('');
   const [expandedToolIdx, setExpandedToolIdx] = useState(null);
   const [showPresets, setShowPresets] = useState(false);
+  const [isGeneratingGuidelines, setIsGeneratingGuidelines] = useState(false);
+  const [availabilities, setAvailabilities] = useState([]);
+  const [slotDuration, setSlotDuration] = useState(60);
+  const [isSavingAvailability, setIsSavingAvailability] = useState(false);
+
+  // Load availability
+  useEffect(() => {
+    if (activeAgentId) {
+      axios.get(`${API_AGENTS}/${activeAgentId}/availability`).then(res => {
+        const data = res.data;
+        const defaultAvail = Array.from({ length: 7 }, (_, i) => ({
+          dayOfWeek: i,
+          startTime: '09:00',
+          endTime: '17:00',
+          isActive: [1, 2, 3, 4, 5].includes(i) // Mon-Fri active by default
+        }));
+        
+        if (data.availabilities && data.availabilities.length > 0) {
+          const merged = defaultAvail.map(da => {
+            const found = data.availabilities.find(a => a.dayOfWeek === da.dayOfWeek);
+            return found || da;
+          });
+          setAvailabilities(merged);
+        } else {
+          setAvailabilities(defaultAvail);
+        }
+        setSlotDuration(data.slotDuration || 60);
+      }).catch(err => {
+        console.error('Failed to load availability', err);
+      });
+    }
+  }, [activeAgentId]);
+
+  const saveAvailability = async () => {
+    if (!activeAgentId) return;
+    setIsSavingAvailability(true);
+    try {
+      await axios.put(`${API_AGENTS}/${activeAgentId}/availability`, {
+        availabilities,
+        slotDuration
+      });
+    } catch (err) {
+      console.error('Failed to save availability', err);
+    } finally {
+      setIsSavingAvailability(false);
+    }
+  };
+
+  // ── Guideline Generator ────────────────────────────────────────────────────
+  const generateGuidelines = async () => {
+    if (!activeAgentId) {
+      alert("Please save the agent first before generating guidelines.");
+      return;
+    }
+    
+    // Auto-save before generating to ensure the backend has the latest context
+    await onSave();
+    
+    setIsGeneratingGuidelines(true);
+    try {
+      const res = await axios.post(`${API_AGENTS}/${activeAgentId}/generate-guidelines`);
+      if (res.data && res.data.conversationGuidelines) {
+        setConfig(prev => ({ ...prev, conversationGuidelines: res.data.conversationGuidelines }));
+      }
+    } catch (err) {
+      console.error('Failed to generate guidelines', err);
+      alert('Failed to generate guidelines. See console for details.');
+    } finally {
+      setIsGeneratingGuidelines(false);
+    }
+  };
 
   // ── Data collection field helpers ──────────────────────────────────────────
   const addDataField = (e) => {
@@ -217,12 +289,35 @@ export default function AgentConfig({
 
           {/* System Prompt */}
           <div className="space-y-2">
-            <label className="text-sm font-medium">System Prompt</label>
+            <label className="text-sm font-medium">System Prompt (Role & Identity)</label>
             <textarea
               value={config.systemPrompt}
               onChange={e => setConfig({ ...config, systemPrompt: e.target.value })}
               className="flex min-h-[150px] w-full rounded-md border border-input bg-card px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
               placeholder="Describe what this agent does, its role, business context..."
+            />
+          </div>
+
+          {/* Conversation Guidelines */}
+          <div className="space-y-2">
+            <div className="flex justify-between items-center">
+              <label className="text-sm font-medium">Conversation Guidelines (Sequential Flow)</label>
+              <Button 
+                variant="outline" 
+                size="sm" 
+                className="h-8 gap-1.5 text-xs text-primary border-primary/20 hover:bg-primary/10" 
+                onClick={generateGuidelines}
+                disabled={isGeneratingGuidelines || !activeAgentId}
+              >
+                <Sparkles className="w-3.5 h-3.5" /> 
+                {isGeneratingGuidelines ? 'Generating...' : 'Auto-Generate'}
+              </Button>
+            </div>
+            <textarea
+              value={config.conversationGuidelines || ''}
+              onChange={e => setConfig({ ...config, conversationGuidelines: e.target.value })}
+              className="flex min-h-[200px] w-full rounded-md border border-input bg-card px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 font-mono text-xs"
+              placeholder="Step-by-step instructions on how the call should flow (or use the AI generator)..."
             />
           </div>
 
@@ -260,6 +355,113 @@ export default function AgentConfig({
               className="flex h-9 w-full rounded-md border border-input bg-card px-3 py-1 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
             />
           </div>
+
+          {/* Automated Confirmations */}
+          <div className="space-y-3 pt-2 border-t border-border">
+            <div>
+              <label className="text-sm font-medium">Automated Confirmations</label>
+              <p className="text-xs text-zinc-500 mt-0.5">
+                Automatically send a receipt or summary after successfully helping a caller.
+              </p>
+            </div>
+            <div className="flex flex-col gap-3">
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={config.enableWhatsAppConfirmation || false}
+                  onChange={e => setConfig({ ...config, enableWhatsAppConfirmation: e.target.checked })}
+                  className="rounded border-zinc-700 bg-zinc-900 text-primary focus:ring-primary focus:ring-offset-background"
+                />
+                Send WhatsApp Confirmation
+              </label>
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={config.enableEmailConfirmation || false}
+                  onChange={e => setConfig({ ...config, enableEmailConfirmation: e.target.checked })}
+                  className="rounded border-zinc-700 bg-zinc-900 text-primary focus:ring-primary focus:ring-offset-background"
+                />
+                Send Email Confirmation
+              </label>
+            </div>
+          </div>
+
+          {/* Availability Management */}
+          {activeAgentId && (
+            <div className="space-y-4 pt-4 border-t border-border">
+              <div className="flex justify-between items-center">
+                <div>
+                  <label className="text-sm font-medium">Availability Management</label>
+                  <p className="text-xs text-zinc-500 mt-0.5">
+                    Configure working hours for the internal CRM booking system.
+                  </p>
+                </div>
+                <Button 
+                  onClick={saveAvailability} 
+                  disabled={isSavingAvailability} 
+                  size="sm" 
+                  variant="outline"
+                  className="h-8 text-xs border-zinc-700 hover:bg-zinc-800"
+                >
+                  {isSavingAvailability ? 'Saving...' : 'Save Schedule'}
+                </Button>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <label className="text-sm font-medium">Slot Duration (mins)</label>
+                <select
+                  value={slotDuration}
+                  onChange={e => setSlotDuration(parseInt(e.target.value, 10))}
+                  className="h-8 w-24 rounded-md border border-input bg-card px-2 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                >
+                  <option value={15}>15</option>
+                  <option value={30}>30</option>
+                  <option value={45}>45</option>
+                  <option value={60}>60</option>
+                </select>
+              </div>
+
+              <div className="space-y-2">
+                {['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'].map((dayName, idx) => {
+                  const av = availabilities.find(a => a.dayOfWeek === idx) || { dayOfWeek: idx, startTime: '09:00', endTime: '17:00', isActive: false };
+                  return (
+                    <div key={idx} className="flex items-center gap-4 bg-zinc-900/50 p-2 rounded-md border border-zinc-800">
+                      <label className="flex items-center gap-2 text-sm w-32 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={av.isActive}
+                          onChange={e => {
+                            setAvailabilities(prev => prev.map(a => a.dayOfWeek === idx ? { ...a, isActive: e.target.checked } : a));
+                          }}
+                          className="rounded border-zinc-700 bg-zinc-900 text-primary focus:ring-primary focus:ring-offset-background"
+                        />
+                        {dayName}
+                      </label>
+                      <div className={`flex items-center gap-2 ${!av.isActive ? 'opacity-50 pointer-events-none' : ''}`}>
+                        <input
+                          type="time"
+                          value={av.startTime}
+                          onChange={e => {
+                            setAvailabilities(prev => prev.map(a => a.dayOfWeek === idx ? { ...a, startTime: e.target.value } : a));
+                          }}
+                          className="h-8 rounded-md border border-input bg-card px-2 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                        />
+                        <span className="text-zinc-500 text-sm">to</span>
+                        <input
+                          type="time"
+                          value={av.endTime}
+                          onChange={e => {
+                            setAvailabilities(prev => prev.map(a => a.dayOfWeek === idx ? { ...a, endTime: e.target.value } : a));
+                          }}
+                          className="h-8 rounded-md border border-input bg-card px-2 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           {/* Custom Tools */}
           <div className="space-y-3">
@@ -591,5 +793,3 @@ export default function AgentConfig({
     </div>
   );
 }
-
-
