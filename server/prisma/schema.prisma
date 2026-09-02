@@ -33,6 +33,7 @@ model Agent {
   enableEmailConfirmation    Boolean       @default(false)
   enableWhatsAppConfirmation Boolean       @default(false)
   allowedEmails              String[]      @default([])
+  providers              Json?
   createdAt              DateTime      @default(now())
   updatedAt              DateTime      @updatedAt
   

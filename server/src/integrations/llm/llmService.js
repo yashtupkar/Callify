@@ -5,12 +5,12 @@ const { LLMProvider } = require('../ProviderInterfaces');
 class LLMService extends LLMProvider {
   constructor() {
     super();
-    // Use OpenRouter if key is present, otherwise fallback to OpenAI
     this.client = new OpenAI({
       baseURL: process.env.OPENROUTER_API_KEY ? "https://openrouter.ai/api/v1" : undefined,
       apiKey: process.env.OPENROUTER_API_KEY || process.env.OPENAI_API_KEY,
     });
     this.systemPrompt = "You are a helpful AI conversational agent.";
+    this.model = process.env.VOICE_LLM_MODEL || "openai/gpt-4o-mini";
   }
 
   initialize(systemPrompt) {
@@ -54,7 +54,7 @@ class LLMService extends LLMProvider {
         ...(contextInjection ? [contextInjection] : []),
       ];
 
-      const model = process.env.VOICE_LLM_MODEL || "openai/gpt-4o-mini";
+      const model = this.model || process.env.VOICE_LLM_MODEL || "openai/gpt-4o-mini";
 
       const options = {
         model,

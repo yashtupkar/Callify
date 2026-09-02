@@ -70,17 +70,13 @@ export default function AgentBuilderChat({ config, setConfig, onSave, hideHeader
   return (
     <div className="flex flex-col h-full bg-zinc-950 border-r border-border min-w-0 flex-1">
       {!hideHeader && (
-        <div className="p-4 border-b border-border flex justify-between items-center bg-card shrink-0">
-          <h1 className="text-xl font-bold flex items-center gap-2">
-            <Bot className="w-5 h-5 text-primary" />
-            Agent Builder
+        <div className="px-5 py-4 border-b border-border flex justify-between items-center bg-card shrink-0 h-[72px]">
+          <h1 className="text-base font-semibold flex items-center gap-2 text-zinc-100">
+            <div className="w-8 h-8 rounded-full bg-emerald-500/20 flex items-center justify-center shrink-0">
+              <Bot className="w-4 h-4 text-emerald-400" />
+            </div>
+            Composer
           </h1>
-          <div className="flex gap-2">
-            <Button onClick={handleSaveClick} size="sm" className="gap-2" disabled={isSaving}>
-              {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
-              {isSaving ? 'Saving…' : 'Save Agent'}
-            </Button>
-          </div>
         </div>
       )}
 

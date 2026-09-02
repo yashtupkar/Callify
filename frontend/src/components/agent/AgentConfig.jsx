@@ -2,8 +2,23 @@ import { useEffect, useState } from 'react';
 import axios from 'axios';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Save, Trash2, Plus, X, ChevronDown, ChevronUp, Webhook, Globe, Sparkles, Loader2, BarChart3 } from 'lucide-react';
+import { Save, Trash2, Plus, X, ChevronDown, ChevronUp, Webhook, Globe, Sparkles, Loader2, BarChart3, Settings2, Brain, Volume2, Mic, Pencil } from 'lucide-react';
 import { API_AGENTS } from '../../lib/constants';
+
+const LLM_PROVIDERS = [
+  { id: 'openai', name: 'OpenAI', models: ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'gpt-3.5-turbo'], defaultModel: 'gpt-4o-mini' },
+  { id: 'openrouter', name: 'OpenRouter', models: ['openai/gpt-4o', 'openai/gpt-4o-mini', 'anthropic/claude-3.5-sonnet', 'google/gemini-pro', 'meta-llama/llama-4-maverick', 'openai/gpt-oss-120b'], defaultModel: 'openai/gpt-4o-mini' },
+];
+
+const TTS_PROVIDERS = [
+  { id: 'elevenlabs', name: 'ElevenLabs', models: ['eleven_turbo_v2_5', 'eleven_multilingual_v2', 'eleven_monolingual_v1'], defaultModel: 'eleven_turbo_v2_5' },
+  { id: 'fish', name: 'Fish Audio', models: ['s2.1-pro-free', 's2.1-pro', 's1-fast'], defaultModel: 's2.1-pro-free' },
+  { id: 'sarvam', name: 'Sarvam', models: ['bulbul:v3'], defaultModel: 'bulbul:v3' },
+];
+
+const STT_PROVIDERS = [
+  { id: 'deepgram', name: 'Deepgram', models: ['nova-2', 'nova-3', 'base'], defaultModel: 'nova-2' },
+];
 
 const TOOL_TYPE_LABELS = {
   frontend: { label: 'Frontend (JS)', icon: '⚡', desc: 'Your page handles the call' },
@@ -84,6 +99,37 @@ export default function AgentConfig({
   const [availabilities, setAvailabilities] = useState([]);
   const [slotDuration, setSlotDuration] = useState(60);
   const [isSavingAvailability, setIsSavingAvailability] = useState(false);
+  const [providers, setProviders] = useState({
+    llm: { provider: 'openrouter', model: 'openai/gpt-4o-mini' },
+    tts: { provider: 'elevenlabs', model: 'eleven_turbo_v2_5', voiceId: '' },
+    stt: { provider: 'deepgram', model: 'nova-2' },
+  });
+  const [showProviderDialog, setShowProviderDialog] = useState(false);
+  const [activeProviderTab, setActiveProviderTab] = useState('llm');
+
+  // Load providers from agent config
+  useEffect(() => {
+    if (config.providers) {
+      setProviders({
+        llm: config.providers.llm || { provider: 'openrouter', model: 'openai/gpt-4o-mini' },
+        tts: config.providers.tts || { provider: 'elevenlabs', model: 'eleven_turbo_v2_5', voiceId: '' },
+        stt: config.providers.stt || { provider: 'deepgram', model: 'nova-2' },
+      });
+    }
+  }, [config.providers]);
+
+  const updateProvider = (type, field, value) => {
+    setProviders(prev => ({
+      ...prev,
+      [type]: { ...prev[type], [field]: value }
+    }));
+  };
+
+  const getProviderLabel = (type) => {
+    const list = type === 'llm' ? LLM_PROVIDERS : type === 'tts' ? TTS_PROVIDERS : STT_PROVIDERS;
+    const current = list.find(p => p.id === providers[type]?.provider);
+    return current ? current.name : 'Select';
+  };
 
   // Load availability
   useEffect(() => {
@@ -289,7 +335,115 @@ export default function AgentConfig({
       )}
 
       <div className="flex-1 min-h-0 overflow-y-auto p-6 scrollbar-thin">
-        <div className="max-w-2xl space-y-6">
+        <div className="max-w-full space-y-6">
+
+          {/* Provider Selection Cards */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            
+            {/* STT Card */}
+            <div 
+              onClick={() => { setActiveProviderTab('stt'); setShowProviderDialog(true); }}
+              className="bg-[#1c1c1e] rounded-xl p-4 border border-white/5 cursor-pointer hover:bg-white/5 transition-colors group flex flex-col"
+            >
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <div className="w-2 h-2 rounded-full bg-orange-500"></div>
+                  <span className="text-[10px] font-bold text-zinc-500 tracking-wider">TRANSCRIBER</span>
+                </div>
+                <Pencil className="w-3.5 h-3.5 text-zinc-500 opacity-0 group-hover:opacity-100 transition-opacity" />
+              </div>
+              <div className="mb-4">
+                <div className="text-white font-semibold text-lg truncate">{providers.stt?.model || 'None'}</div>
+                <div className="text-zinc-400 text-sm flex items-center gap-1.5 mt-0.5">
+                  <span className="capitalize">{providers.stt?.provider || 'Unknown'}</span>
+                  {providers.stt?.provider && <span>· English</span>}
+                </div>
+              </div>
+              <div className="grid grid-cols-3 gap-2 mt-auto pt-4 border-t border-white/5">
+                <div>
+                  <div className="text-[10px] font-medium text-zinc-500 mb-1 border-b border-zinc-700/50 pb-1 border-dashed">Latency</div>
+                  <div className="text-zinc-300 text-xs font-medium">330ms</div>
+                </div>
+                <div>
+                  <div className="text-[10px] font-medium text-zinc-500 mb-1 border-b border-zinc-700/50 pb-1 border-dashed">Cost</div>
+                  <div className="text-zinc-300 text-xs font-medium">$0.01/min</div>
+                </div>
+                <div>
+                  <div className="text-[10px] font-medium text-zinc-500 mb-1 border-b border-zinc-700/50 pb-1 border-dashed">Accuracy</div>
+                  <div className="text-zinc-300 text-xs font-medium">2.7% WER</div>
+                </div>
+              </div>
+            </div>
+
+            {/* LLM Card */}
+            <div 
+              onClick={() => { setActiveProviderTab('llm'); setShowProviderDialog(true); }}
+              className="bg-[#1c1c1e] rounded-xl p-4 border border-white/5 cursor-pointer hover:bg-white/5 transition-colors group flex flex-col"
+            >
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <div className="w-2 h-2 rounded-full bg-blue-500"></div>
+                  <span className="text-[10px] font-bold text-zinc-500 tracking-wider">MODEL</span>
+                </div>
+                <Pencil className="w-3.5 h-3.5 text-zinc-500 opacity-0 group-hover:opacity-100 transition-opacity" />
+              </div>
+              <div className="mb-4">
+                <div className="text-white font-semibold text-lg truncate">{providers.llm?.model?.split('/').pop() || 'None'}</div>
+                <div className="text-zinc-400 text-sm flex items-center gap-1.5 mt-0.5 truncate">
+                  <span className="capitalize">{providers.llm?.provider || 'Unknown'}</span>
+                </div>
+              </div>
+              <div className="grid grid-cols-3 gap-2 mt-auto pt-4 border-t border-white/5">
+                <div>
+                  <div className="text-[10px] font-medium text-zinc-500 mb-1 border-b border-zinc-700/50 pb-1 border-dashed">Latency</div>
+                  <div className="text-zinc-300 text-xs font-medium">690ms</div>
+                </div>
+                <div>
+                  <div className="text-[10px] font-medium text-zinc-500 mb-1 border-b border-zinc-700/50 pb-1 border-dashed">Cost</div>
+                  <div className="text-zinc-300 text-xs font-medium">$0.02/min</div>
+                </div>
+                <div>
+                  <div className="text-[10px] font-medium text-zinc-500 mb-1 border-b border-zinc-700/50 pb-1 border-dashed">Intelligence</div>
+                  <div className="text-zinc-300 text-xs font-medium">20</div>
+                </div>
+              </div>
+            </div>
+
+            {/* TTS Card */}
+            <div 
+              onClick={() => { setActiveProviderTab('tts'); setShowProviderDialog(true); }}
+              className="bg-[#1c1c1e] rounded-xl p-4 border border-white/5 cursor-pointer hover:bg-white/5 transition-colors group flex flex-col"
+            >
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <div className="w-2 h-2 rounded-full bg-purple-500"></div>
+                  <span className="text-[10px] font-bold text-zinc-500 tracking-wider">VOICE</span>
+                </div>
+                <Pencil className="w-3.5 h-3.5 text-zinc-500 opacity-0 group-hover:opacity-100 transition-opacity" />
+              </div>
+              <div className="mb-4">
+                <div className="text-white font-semibold text-lg truncate">{providers.tts?.model || 'None'}</div>
+                <div className="text-zinc-400 text-sm flex items-center gap-1.5 mt-0.5 truncate">
+                  <span className="capitalize">{providers.tts?.provider || 'Unknown'}</span>
+                </div>
+              </div>
+              <div className="grid grid-cols-3 gap-2 mt-auto pt-4 border-t border-white/5">
+                <div>
+                  <div className="text-[10px] font-medium text-zinc-500 mb-1 border-b border-zinc-700/50 pb-1 border-dashed">Latency</div>
+                  <div className="text-zinc-300 text-xs font-medium">480ms</div>
+                </div>
+                <div>
+                  <div className="text-[10px] font-medium text-zinc-500 mb-1 border-b border-zinc-700/50 pb-1 border-dashed">Cost</div>
+                  <div className="text-zinc-300 text-xs font-medium">$0.02/min</div>
+                </div>
+                <div>
+                  <div className="text-[10px] font-medium text-zinc-500 mb-1 border-b border-zinc-700/50 pb-1 border-dashed">Humanness</div>
+                  <div className="text-zinc-500 text-xs font-medium">—</div>
+                </div>
+              </div>
+            </div>
+            
+          </div>
 
           {/* Agent Name */}
           <div className="space-y-2">
@@ -297,7 +451,7 @@ export default function AgentConfig({
             <Input
               value={config.name}
               onChange={e => setConfig({ ...config, name: e.target.value })}
-              className="bg-card"
+              className="bg-[#1c1c1e]"
               placeholder="e.g. SmileCare Receptionist"
             />
           </div>
@@ -308,7 +462,7 @@ export default function AgentConfig({
             <Input
               value={config.initialMessage}
               onChange={e => setConfig({ ...config, initialMessage: e.target.value })}
-              className="bg-card"
+              className="bg-[#1c1c1e]"
               placeholder="What the agent says when the call connects"
             />
           </div>
@@ -319,7 +473,7 @@ export default function AgentConfig({
             <textarea
               value={config.systemPrompt}
               onChange={e => setConfig({ ...config, systemPrompt: e.target.value })}
-              className="flex min-h-[150px] w-full rounded-md border border-input bg-card px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+              className="flex min-h-[150px] w-full rounded-md border border-input bg-[#1c1c1e] px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
               placeholder="Describe what this agent does, its role, business context..."
             />
           </div>
@@ -331,7 +485,7 @@ export default function AgentConfig({
               <Button 
                 variant="outline" 
                 size="sm" 
-                className="h-8 gap-1.5 text-xs text-primary border-primary/20 hover:bg-primary/10" 
+                className="h-8 gap-1.5 text-xs bg-card text-primary border-primary/20 hover:bg-primary/10" 
                 onClick={generateGuidelines}
                 disabled={isGeneratingGuidelines || !activeAgentId}
               >
@@ -822,6 +976,176 @@ export default function AgentConfig({
               initialEmails={Array.isArray(config.allowedEmails) ? config.allowedEmails : []}
               onUpdate={(emails) => setConfig(prev => ({ ...prev, allowedEmails: emails }))}
             />
+          )}
+
+          {/* Provider Configuration Dialog */}
+          {showProviderDialog && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm" onClick={() => setShowProviderDialog(false)}>
+              <div className="bg-card border border-border rounded-xl shadow-2xl w-full max-w-lg mx-4" onClick={e => e.stopPropagation()}>
+                <div className="flex items-center justify-between p-4 border-b border-border">
+                  <h3 className="text-lg font-semibold">Provider Configuration</h3>
+                  <button onClick={() => setShowProviderDialog(false)} className="p-1 rounded hover:bg-zinc-800 text-zinc-400 hover:text-white transition-colors">
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+                
+                <div className="p-4">
+                  {/* Tabs */}
+                  <div className="flex gap-1 mb-4 p-1 bg-zinc-900 rounded-lg">
+                    {[
+                      { id: 'llm', label: 'LLM', icon: Brain, color: 'text-emerald-400' },
+                      { id: 'tts', label: 'TTS', icon: Volume2, color: 'text-blue-400' },
+                      { id: 'stt', label: 'STT', icon: Mic, color: 'text-purple-400' },
+                    ].map(tab => {
+                      const Icon = tab.icon;
+                      const isActive = activeProviderTab === tab.id;
+                      return (
+                        <button
+                          key={tab.id}
+                          onClick={() => setActiveProviderTab(tab.id)}
+                          className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-md text-xs font-medium transition-colors ${
+                            isActive
+                              ? 'bg-zinc-800 text-white shadow-sm'
+                              : 'text-zinc-400 hover:text-zinc-200'
+                          }`}
+                        >
+                          <Icon className="w-3.5 h-3.5" />
+                          {tab.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {/* LLM Config */}
+                  {activeProviderTab === 'llm' && (
+                    <div className="space-y-4">
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">LLM Provider</label>
+                        <select
+                          value={providers.llm?.provider || 'openrouter'}
+                          onChange={e => {
+                            const newProvider = e.target.value;
+                            const providerData = LLM_PROVIDERS.find(p => p.id === newProvider);
+                            updateProvider('llm', 'provider', newProvider);
+                            if (providerData) {
+                              updateProvider('llm', 'model', providerData.defaultModel);
+                            }
+                          }}
+                          className="flex h-10 w-full rounded-md border border-input bg-card px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                        >
+                          {LLM_PROVIDERS.map(p => (
+                            <option key={p.id} value={p.id}>{p.name}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Model</label>
+                        <select
+                          value={providers.llm?.model || 'openai/gpt-4o-mini'}
+                          onChange={e => updateProvider('llm', 'model', e.target.value)}
+                          className="flex h-10 w-full rounded-md border border-input bg-card px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                        >
+                          {(LLM_PROVIDERS.find(p => p.id === providers.llm?.provider)?.models || []).map(m => (
+                            <option key={m} value={m}>{m}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* TTS Config */}
+                  {activeProviderTab === 'tts' && (
+                    <div className="space-y-4">
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">TTS Provider</label>
+                        <select
+                          value={providers.tts?.provider || 'elevenlabs'}
+                          onChange={e => {
+                            const newProvider = e.target.value;
+                            const providerData = TTS_PROVIDERS.find(p => p.id === newProvider);
+                            updateProvider('tts', 'provider', newProvider);
+                            if (providerData) {
+                              updateProvider('tts', 'model', providerData.defaultModel);
+                            }
+                          }}
+                          className="flex h-10 w-full rounded-md border border-input bg-card px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                        >
+                          {TTS_PROVIDERS.map(p => (
+                            <option key={p.id} value={p.id}>{p.name}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Model / Voice</label>
+                        <select
+                          value={providers.tts?.model || 'eleven_turbo_v2_5'}
+                          onChange={e => updateProvider('tts', 'model', e.target.value)}
+                          className="flex h-10 w-full rounded-md border border-input bg-card px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                        >
+                          {(TTS_PROVIDERS.find(p => p.id === providers.tts?.provider)?.models || []).map(m => (
+                            <option key={m} value={m}>{m}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Voice ID <span className="text-zinc-500 font-normal">(Optional)</span></label>
+                        <Input
+                          value={providers.tts?.voiceId || ''}
+                          onChange={e => updateProvider('tts', 'voiceId', e.target.value)}
+                          className="bg-card"
+                          placeholder="Leave blank for default"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* STT Config */}
+                  {activeProviderTab === 'stt' && (
+                    <div className="space-y-4">
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">STT Provider</label>
+                        <select
+                          value={providers.stt?.provider || 'deepgram'}
+                          onChange={e => {
+                            const newProvider = e.target.value;
+                            const providerData = STT_PROVIDERS.find(p => p.id === newProvider);
+                            updateProvider('stt', 'provider', newProvider);
+                            if (providerData) {
+                              updateProvider('stt', 'model', providerData.defaultModel);
+                            }
+                          }}
+                          className="flex h-10 w-full rounded-md border border-input bg-card px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                        >
+                          {STT_PROVIDERS.map(p => (
+                            <option key={p.id} value={p.id}>{p.name}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Model</label>
+                        <select
+                          value={providers.stt?.model || 'nova-2'}
+                          onChange={e => updateProvider('stt', 'model', e.target.value)}
+                          className="flex h-10 w-full rounded-md border border-input bg-card px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                        >
+                          {(STT_PROVIDERS.find(p => p.id === providers.stt?.provider)?.models || []).map(m => (
+                            <option key={m} value={m}>{m}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex justify-end gap-2 p-4 border-t border-border">
+                  <Button variant="outline" size="sm" onClick={() => setShowProviderDialog(false)}>Cancel</Button>
+                  <Button size="sm" onClick={() => {
+                    setConfig(prev => ({ ...prev, providers }));
+                    setShowProviderDialog(false);
+                  }}>Save Providers</Button>
+                </div>
+              </div>
+            </div>
           )}
         </div>
       </div>

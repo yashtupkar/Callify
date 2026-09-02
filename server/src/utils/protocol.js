@@ -66,7 +66,9 @@ function validateSessionStart(payload) {
       language: config.language || 'en-US',
       timezone: config.timezone || 'Asia/Kolkata',
       dataToCollect: Array.isArray(config.dataToCollect) ? config.dataToCollect : [],
-      customTools: config.customTools || []
+      customTools: config.customTools || [],
+      conversationGuidelines: config.conversationGuidelines || '',
+      providers: config.providers || null
     }
   };
 }

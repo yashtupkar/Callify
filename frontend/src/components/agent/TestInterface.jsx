@@ -62,11 +62,10 @@ export default function TestInterface({
             <div className="absolute -inset-4 bg-primary/20 rounded-full animate-ping" />
           )}
           <Avatar
-            className={`w-24 h-24 border-4 ${
-              isAgentSpeaking
+            className={`w-24 h-24 border-4 ${isAgentSpeaking
                 ? 'border-primary shadow-[0_0_30px_rgba(168,85,247,0.4)]'
                 : 'border-zinc-800'
-            } transition-all duration-300`}
+              } transition-all duration-300`}
           >
             <AvatarImage
               src={`https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(agentName || 'agent')}&backgroundColor=09090b`}
@@ -133,11 +132,10 @@ export default function TestInterface({
                         )}
                       </Avatar>
                       <div
-                        className={`p-3 rounded-2xl ${
-                          msg.speaker === 'user'
+                        className={`p-3 rounded-2xl ${msg.speaker === 'user'
                             ? 'bg-primary text-primary-foreground rounded-tr-sm'
                             : 'bg-zinc-800 text-zinc-100 rounded-tl-sm'
-                        } ${!msg.isFinal ? 'opacity-70' : ''}`}
+                          } ${!msg.isFinal ? 'opacity-70' : ''}`}
                       >
                         <p className="text-sm leading-relaxed whitespace-pre-wrap">{msg.text}</p>
                         {!msg.isFinal && (

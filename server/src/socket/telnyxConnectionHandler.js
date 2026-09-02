@@ -8,7 +8,6 @@ function setupTelnyxConnectionHandler(ws, req, to = null) {
   
   // We'll extract the streamSid from the 'start' event later
   const channelAdapter = new TelnyxChannelAdapter(ws);
-  const conversationManager = new ConversationManager(channelAdapter);
 
   ws.on('message', async (message) => {
     try {
@@ -24,6 +23,8 @@ function setupTelnyxConnectionHandler(ws, req, to = null) {
           voice: "alloy" 
         };
 
+        let providerConfig = null;
+
         if (to) {
           try {
             // Find if this phone number is mapped to an Agent
@@ -36,12 +37,6 @@ function setupTelnyxConnectionHandler(ws, req, to = null) {
               
               const { agent, registry, systemPrompt } = await loadAgentRuntime(dbPhone.agentId);
               
-              // We pass the built registry to startConversation
-              // We'll need to update startConversation to accept a registry instance, 
-              // but for now we can just attach it to config or replace the ConversationManager registry
-              conversationManager.registry = registry;
-              conversationManager.toolExecutor.registry = registry;
-              
               config = {
                 ...agent,
                 systemPrompt,
@@ -49,6 +44,8 @@ function setupTelnyxConnectionHandler(ws, req, to = null) {
                 voiceId: agent.voiceId,
                 language: agent.language
               };
+
+              providerConfig = agent.providers || null;
             } else {
               console.log(`[TelnyxConnectionHandler] Dialed number ${to} has no mapped Agent. Using default config.`);
             }
@@ -57,6 +54,7 @@ function setupTelnyxConnectionHandler(ws, req, to = null) {
           }
         }
         
+        const conversationManager = new ConversationManager(channelAdapter, providerConfig);
         await conversationManager.startConversation(config, 'telnyx');
       } 
       else if (msg.event === 'media') {

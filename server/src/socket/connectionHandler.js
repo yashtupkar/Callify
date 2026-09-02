@@ -4,15 +4,13 @@ const { BrowserChannelAdapter } = require('../channels/BrowserChannelAdapter');
 function setupConnectionHandler(ws, req) {
   console.log('[ConnectionHandler] Initializing new session...');
   
-  // We instantiate a new ConversationManager for every WebSocket connection using the BrowserChannelAdapter
-  const channelAdapter = new BrowserChannelAdapter(ws);
-  const conversationManager = new ConversationManager(channelAdapter);
-
   const { validateSessionStart, validateToolResult, MAX_PAYLOAD_SIZE } = require('../utils/protocol');
   
   let messageCount = 0;
   const RATE_LIMIT_RESET_MS = 1000;
   const MAX_MESSAGES_PER_SEC = 20;
+  
+  let conversationManager = null;
   
   const rateLimitInterval = setInterval(() => {
     messageCount = 0;
@@ -36,8 +34,11 @@ function setupConnectionHandler(ws, req) {
       try {
         msg = JSON.parse(message.toString());
       } catch(e) {
-        // If not JSON, it might be raw binary audio from browser MediaRecorder
         if (Buffer.isBuffer(message)) {
+          if (!conversationManager) {
+            console.error('[ConnectionHandler] Received audio before session start');
+            return;
+          }
           conversationManager.handleIncomingAudio(message);
           return;
         }
@@ -48,64 +49,97 @@ function setupConnectionHandler(ws, req) {
           case 'session.start':
             const validatedStart = validateSessionStart(msg);
             console.log('[ConnectionHandler] session.start received. Config validated.');
+            
+            const providerConfig = validatedStart.config.providers || null;
+            const channelAdapter = new BrowserChannelAdapter(ws);
+            conversationManager = new ConversationManager(channelAdapter, providerConfig);
             await conversationManager.startConversation(validatedStart.config);
             break;
           case 'audio.input':
-            // Base64 encoded audio or raw buffer
+            if (!conversationManager) {
+              console.error('[ConnectionHandler] Received audio before session start');
+              return;
+            }
             if (msg.data) {
               conversationManager.handleIncomingAudio(Buffer.from(msg.data, 'base64'));
             }
             break;
           case 'text.input':
+            if (!conversationManager) {
+              console.error('[ConnectionHandler] Received text before session start');
+              return;
+            }
             if (msg.text) {
-              // Optionally interrupt agent if it's speaking, though maybe handled in frontend
               if (conversationManager.tts) {
                 conversationManager.tts.interrupt();
               }
               conversationManager.handleUserUtterance(msg.text);
-              // Send the message back to client so it gets displayed
               conversationManager.sendToClient({ event: 'transcript', data: { text: msg.text, isFinal: true, speaker: 'user' } });
             }
             break;
           case 'session.ended':
             console.log('[ConnectionHandler] session.ended received.');
-            conversationManager.endConversation();
+            if (conversationManager) {
+              try {
+                conversationManager.endConversation();
+              } catch (err) {
+                console.error('[ConnectionHandler] Error ending conversation:', err);
+              }
+            }
             break;
           case 'tool.completed':
             const validatedTool = validateToolResult(msg);
             console.log('[ConnectionHandler] tool.completed received:', validatedTool.toolName);
-            conversationManager.handleFrontendToolResult(validatedTool.toolName, validatedTool.result, validatedTool.toolCallId);
+            if (conversationManager) {
+              try {
+                conversationManager.handleFrontendToolResult(validatedTool.toolName, validatedTool.result, validatedTool.toolCallId);
+              } catch (err) {
+                console.error('[ConnectionHandler] Error handling tool result:', err);
+              }
+            }
             break;
           default:
             console.warn(`[ConnectionHandler] Unknown event type: ${msg.type}`);
         }
       } else if (msg && msg.event) {
-        // Fallback for legacy client temporarily
         console.warn(`[ConnectionHandler] Received legacy event: ${msg.event}`);
         if (msg.event === 'start') {
+          const providerConfig = msg.config?.providers || null;
+          const channelAdapter = new BrowserChannelAdapter(ws);
+          conversationManager = new ConversationManager(channelAdapter, providerConfig);
           await conversationManager.startConversation(msg.config);
         } else if (msg.event === 'stop') {
-          conversationManager.endConversation();
+          if (conversationManager) {
+            try {
+              conversationManager.endConversation();
+            } catch (err) {
+              console.error('[ConnectionHandler] Error ending conversation:', err);
+            }
+          }
         } else if (msg.event === 'tool_execution_result') {
-          conversationManager.handleFrontendToolResult(msg.toolName, msg.result, msg.toolCallId);
+          if (conversationManager) {
+            try {
+              conversationManager.handleFrontendToolResult(msg.toolName, msg.result, msg.toolCallId);
+            } catch (err) {
+              console.error('[ConnectionHandler] Error handling tool result:', err);
+            }
+          }
         }
       }
     } catch (err) {
       console.error('[ConnectionHandler] Error processing message:', err.message);
-      // Optional: send error event back to client
-      // ws.send(JSON.stringify({ type: 'error', message: err.message }));
     }
   });
 
   ws.on('close', () => {
     clearInterval(rateLimitInterval);
     console.log('[ConnectionHandler] WebSocket closed by client.');
-    conversationManager.endConversation();
+    if (conversationManager) conversationManager.endConversation();
   });
 
   ws.on('error', (err) => {
     console.error('[ConnectionHandler] WebSocket error:', err);
-    conversationManager.endConversation();
+    if (conversationManager) conversationManager.endConversation();
   });
 }
 

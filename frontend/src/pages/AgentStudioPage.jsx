@@ -67,7 +67,7 @@ export default function AgentStudioPage() {
 
   const [showPhoneDialog, setShowPhoneDialog] = useState(false);
   const [showAnalytics, setShowAnalytics] = useState(false);
-  const [viewMode, setViewMode] = useState('chat');
+  const [activeRightPanel, setActiveRightPanel] = useState('builder'); // 'builder' | 'test' | null
   const [isSaving, setIsSaving] = useState(false);
 
   const fetchAgents = useCallback(async () => {
@@ -143,6 +143,7 @@ export default function AgentStudioPage() {
       enableWhatsAppConfirmation: !!agent.enableWhatsAppConfirmation,
       enableEmailConfirmation: !!agent.enableEmailConfirmation,
       allowedEmails: Array.isArray(agent.allowedEmails) ? agent.allowedEmails : [],
+      providers: agent.providers || null,
     });
     setCustomTools(parsedCustomTools);
   }
@@ -169,7 +170,8 @@ export default function AgentStudioPage() {
       enableWhatsAppConfirmation: config.enableWhatsAppConfirmation,
       enableEmailConfirmation: config.enableEmailConfirmation,
       allowedEmails: Array.isArray(config.allowedEmails) ? config.allowedEmails : [],
-      tools: { dataToCollect: config.dataToCollect, customTools: rawTools }
+      tools: { dataToCollect: config.dataToCollect, customTools: rawTools },
+      providers: config.providers || null,
     };
     try {
       if (agentId) {
@@ -218,7 +220,8 @@ export default function AgentStudioPage() {
       language: config.language,
       timezone: config.timezone,
       firstMessage: config.initialMessage,
-      customTools: rawTools
+      customTools: rawTools,
+      providers: config.providers || null,
     });
   };
 
@@ -250,45 +253,45 @@ export default function AgentStudioPage() {
             </div>
           </div>
 
-          {/* View-mode tabs (centered) */}
-          <div className="mx-auto flex items-center gap-1 p-1 rounded-lg border border-border bg-muted/30">
-            <button
-              onClick={() => setViewMode('chat')}
-              className={cn(
-                'px-3 py-1.5 text-xs font-medium rounded-md transition-all flex items-center gap-1.5',
-                viewMode === 'chat'
-                  ? 'bg-primary text-primary-foreground shadow-sm'
-                  : 'text-muted-foreground hover:text-foreground'
-              )}
-            >
-              <Bot className="w-3.5 h-3.5" /> Builder
-            </button>
-            <button
-              onClick={() => setViewMode('config')}
-              disabled={!agentId}
-              className={cn(
-                'px-3 py-1.5 text-xs font-medium rounded-md transition-all flex items-center gap-1.5',
-                viewMode === 'config'
-                  ? 'bg-primary text-primary-foreground shadow-sm'
-                  : 'text-muted-foreground hover:text-foreground',
-                !agentId && 'opacity-50 cursor-not-allowed'
-              )}
-            >
-              <Settings2 className="w-3.5 h-3.5" /> Advanced
-            </button>
-          </div>
-
-          {/* Right actions */}
+          {/* Actions (right aligned) */}
           <div className="ml-auto flex items-center gap-2 shrink-0">
-            <Button variant="outline" size="sm" onClick={() => setShowPhoneDialog(true)}>
-              <Phone className="w-3.5 h-3.5 mr-1.5" /> Phone numbers
+            <button
+              onClick={() => setActiveRightPanel(prev => prev === 'builder' ? null : 'builder')}
+              className={cn(
+                'h-9 pl-1.5 pr-3 text-sm font-medium rounded-lg transition-all flex items-center gap-2 border',
+                activeRightPanel === 'builder'
+                  ? 'bg-zinc-800/80 border-zinc-700 text-white shadow-sm'
+                  : 'bg-zinc-950 border-zinc-800/80 text-zinc-300 hover:bg-zinc-800/50'
+              )}
+            >
+              <div className="w-6 h-6 rounded-full bg-emerald-500/20 flex items-center justify-center shrink-0">
+                <Bot className="w-3.5 h-3.5 text-emerald-400" />
+              </div>
+              Composer
+            </button>
+            <button
+              onClick={() => setActiveRightPanel(prev => prev === 'test' ? null : 'test')}
+              className={cn(
+                'h-9 px-3 text-sm font-medium rounded-lg transition-all flex items-center gap-2 border',
+                activeRightPanel === 'test'
+                  ? 'bg-emerald-500/10 border-emerald-500/50 text-emerald-400 shadow-sm'
+                  : 'bg-zinc-950 border-zinc-800/80 text-emerald-500/70 hover:bg-emerald-500/5'
+              )}
+            >
+              <Phone className="w-4 h-4" /> Talk
+            </button>
+
+            <div className="w-px h-5 bg-border mx-1" />
+
+            <Button variant="outline" size="icon" className="h-9 w-9" title="Phone numbers" onClick={() => setShowPhoneDialog(true)}>
+              <Phone className="w-4 h-4" />
             </Button>
             {agentId && (
-              <Button variant="ghost" size="sm" onClick={() => navigate(`/crm/agent/${agentId}`)}>
+              <Button variant="ghost" className="h-9 px-3" onClick={() => navigate(`/crm/agent/${agentId}`)}>
                 <BarChart3 className="w-3.5 h-3.5 mr-1.5" /> CRM
               </Button>
             )}
-            <Button size="sm" onClick={wrappedSave} disabled={isSaving}>
+            <Button className="h-9 px-3" onClick={wrappedSave} disabled={isSaving}>
               {isSaving ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Save className="w-3.5 h-3.5 mr-1.5" />}
               {isSaving ? 'Saving…' : 'Save'}
             </Button>
@@ -296,38 +299,44 @@ export default function AgentStudioPage() {
         </div>
 
         <div className="flex-1 min-h-0 overflow-hidden">
-          {!agentId ? (
-            <AgentBuilderChat config={config} setConfig={setConfig} onSave={wrappedSave} hideHeader />
-          ) : viewMode === 'chat' ? (
-            <AgentBuilderChat config={config} setConfig={setConfig} onSave={wrappedSave} hideHeader />
-          ) : (
-            <AgentConfig
-              config={config}
-              setConfig={setConfig}
-              customTools={customTools}
-              setCustomTools={setCustomTools}
-              activeAgentId={agentId || null}
-              phoneNumbers={phoneNumbers}
-              agents={agents}
-              onSave={wrappedSave}
-              onDelete={deleteAgent}
-              onPhoneAssign={fetchPhoneNumbers}
-              hideHeader
-            />
-          )}
+          <AgentConfig
+            config={config}
+            setConfig={setConfig}
+            customTools={customTools}
+            setCustomTools={setCustomTools}
+            activeAgentId={agentId || null}
+            phoneNumbers={phoneNumbers}
+            agents={agents}
+            onSave={wrappedSave}
+            onDelete={deleteAgent}
+            onPhoneAssign={fetchPhoneNumbers}
+            hideHeader
+          />
         </div>
       </div>
 
-      {/* RIGHT: Test Interface (fixed height) */}
-      <TestInterface
-        agentName={config.name}
-        isConnected={isConnected}
-        isAgentSpeaking={isAgentSpeaking}
-        transcript={transcript}
-        onStartCall={handleStartCall}
-        onEndCall={endSession}
-        onSendText={sendTextMessage}
-      />
+      {/* RIGHT PANELS */}
+      <div 
+        className={cn(
+          "transition-[width] duration-300 ease-in-out shrink-0 overflow-hidden flex bg-zinc-950",
+          activeRightPanel ? "w-[450px]" : "w-0 border-l-0"
+        )}
+      >
+        <div className={cn("w-[450px] shrink-0 h-full", activeRightPanel === 'builder' ? 'block' : 'hidden')}>
+          <AgentBuilderChat config={config} setConfig={setConfig} onSave={wrappedSave} />
+        </div>
+        <div className={cn("w-[450px] shrink-0 h-full", activeRightPanel === 'test' ? 'block' : 'hidden')}>
+          <TestInterface
+            agentName={config.name}
+            isConnected={isConnected}
+            isAgentSpeaking={isAgentSpeaking}
+            transcript={transcript}
+            onStartCall={handleStartCall}
+            onEndCall={endSession}
+            onSendText={sendTextMessage}
+          />
+        </div>
+      </div>
 
       <AnalyticsModal
         open={showAnalytics}

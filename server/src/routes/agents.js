@@ -64,7 +64,7 @@ router.get('/', authenticate, async (req, res) => {
 // POST /api/agents - Create a new agent (admin only)
 router.post('/', authenticate, requireRole('admin'), async (req, res) => {
   try {
-    const { name, systemPrompt, conversationGuidelines, initialMessage, voiceId, language, timezone, enableWhatsAppConfirmation, enableEmailConfirmation, tools } = req.body;
+    const { name, systemPrompt, conversationGuidelines, initialMessage, voiceId, language, timezone, enableWhatsAppConfirmation, enableEmailConfirmation, tools, providers } = req.body;
     
     // Quick patch: Find default workspace to prevent crashing since workspaceId is required
     const defaultWorkspace = await dbService.prisma.workspace.findFirst({
@@ -96,6 +96,7 @@ router.post('/', authenticate, requireRole('admin'), async (req, res) => {
         enableWhatsAppConfirmation: enableWhatsAppConfirmation || false,
         enableEmailConfirmation: enableEmailConfirmation || false,
         tools: parsedTools,
+        providers: providers || null,
       }
     });
     res.status(201).json(newAgent);
@@ -109,7 +110,7 @@ router.post('/', authenticate, requireRole('admin'), async (req, res) => {
 router.put('/:id', authenticate, requireRole('admin'), async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, systemPrompt, conversationGuidelines, initialMessage, voiceId, language, timezone, enableWhatsAppConfirmation, enableEmailConfirmation, tools } = req.body;
+    const { name, systemPrompt, conversationGuidelines, initialMessage, voiceId, language, timezone, enableWhatsAppConfirmation, enableEmailConfirmation, tools, providers } = req.body;
     
     let parsedTools = null;
     if (typeof tools === 'string') {
@@ -118,9 +119,7 @@ router.put('/:id', authenticate, requireRole('admin'), async (req, res) => {
       parsedTools = tools;
     }
 
-  const updatedAgent = await dbService.prisma.agent.update({
-    where: { id },
-    data: {
+    const updateData = {
       ...(name && { name }),
       ...(systemPrompt !== undefined && { systemPrompt }),
       ...(conversationGuidelines !== undefined && { conversationGuidelines }),
@@ -132,8 +131,16 @@ router.put('/:id', authenticate, requireRole('admin'), async (req, res) => {
       ...(enableEmailConfirmation !== undefined && { enableEmailConfirmation }),
       ...(tools !== undefined && { tools: parsedTools }),
       ...(Array.isArray(req.body.allowedEmails) && { allowedEmails: req.body.allowedEmails.map(e => String(e).trim().toLowerCase()).filter(Boolean) }),
+    };
+
+    if (providers !== undefined) {
+      updateData.providers = providers || null;
     }
-  });
+
+    const updatedAgent = await dbService.prisma.agent.update({
+      where: { id },
+      data: updateData
+    });
     res.json(updatedAgent);
   } catch (err) {
     console.error('[Agents API] Error updating agent:', err);

@@ -117,6 +117,7 @@ export default function CrmAgentConfigPage() {
       enableWhatsAppConfirmation: !!agent.enableWhatsAppConfirmation,
       enableEmailConfirmation: !!agent.enableEmailConfirmation,
       allowedEmails: Array.isArray(agent.allowedEmails) ? agent.allowedEmails : [],
+      providers: agent.providers || null,
     });
     setCustomTools(parsedCustomTools);
   }
@@ -136,7 +137,8 @@ export default function CrmAgentConfigPage() {
         enableWhatsAppConfirmation: config.enableWhatsAppConfirmation,
         enableEmailConfirmation: config.enableEmailConfirmation,
         allowedEmails: Array.isArray(config.allowedEmails) ? config.allowedEmails : [],
-        tools: { dataToCollect: config.dataToCollect, customTools: rawTools }
+        tools: { dataToCollect: config.dataToCollect, customTools: rawTools },
+        providers: config.providers || null,
       };
       if (agentId) {
         await axios.put(`${API_AGENTS}/${agentId}`, payload);
@@ -169,7 +171,8 @@ export default function CrmAgentConfigPage() {
       language: config.language,
       timezone: config.timezone,
       firstMessage: config.initialMessage,
-      customTools: rawTools
+      customTools: rawTools,
+      providers: config.providers || null,
     });
   };
 

@@ -13,6 +13,7 @@ const { ToolExecutor } = require('../tools/ToolExecutor');
 const { buildAgentPrompt, DEFAULT_ASSISTANT_NAME } = require('../modules/prompt/promptBuilder');
 const { buildToolSchema } = require('../tools/WebhookToolExecutor');
 const { CallStateManager } = require('./CallStateManager');
+const { createLLM, createTTS, createSTT } = require('../integrations/ProviderFactory');
 
 // Maps a base language code to a factory for the TTS provider that should
 // handle it. Anything not listed falls through to the default provider
@@ -23,24 +24,17 @@ const LANGUAGE_TTS_PROVIDERS = {
 };
 
 class ConversationManager extends EventEmitter {
-  constructor(channelAdapter) {
+  constructor(channelAdapter, providerConfig = null) {
     super();
     this.channel = channelAdapter;
 
     // Explicit State Machine
     this.state = 'CREATED'; // CREATED, CONNECTING, CONNECTED, LISTENING, THINKING, SPEAKING, INTERRUPTED, ENDING, ERROR
 
-    this.stt = new STTService();
-    this.llm = new LLMService();
-
-    // Choose TTS provider based on env var, defaulting to ElevenLabs
-    const ttsProviderStr = (process.env.TTS_PROVIDER || '').trim().toLowerCase();
-
-    if (ttsProviderStr === 'fish') {
-      this.tts = new FishAudioTTSProvider({ sampleRate: 16000 });
-    } else {
-      this.tts = new TTSProvider();
-    }
+    this.providerConfig = providerConfig;
+    this.llm = createLLM(providerConfig?.llm);
+    this.stt = createSTT(providerConfig?.stt);
+    this.tts = createTTS(providerConfig?.tts);
 
     this.usageTracker = new UsageTracker();
     this.costCalculator = new CostCalculator();
@@ -205,7 +199,7 @@ class ConversationManager extends EventEmitter {
     this.language = language;
     const baseLang = language.split('-')[0].toLowerCase();
 
-    if (LANGUAGE_TTS_PROVIDERS[baseLang]) {
+    if (!this.providerConfig?.tts?.provider && LANGUAGE_TTS_PROVIDERS[baseLang]) {
       console.log(`[ConversationManager] ${baseLang} selected, overriding TTS provider`);
       this.tts = LANGUAGE_TTS_PROVIDERS[baseLang]();
       this.setupTtsListeners();
@@ -265,7 +259,7 @@ class ConversationManager extends EventEmitter {
     this.transcript.push({ role: 'assistant', content: greeting });
     this.sendToClient({ event: 'transcript', data: { text: greeting, isFinal: true, speaker: 'agent' } });
 
-    const providerName = (process.env.TTS_PROVIDER || '').trim().toLowerCase() === 'fish' ? 'fish' : 'elevenlabs';
+    const providerName = (this.providerConfig?.tts?.provider || process.env.TTS_PROVIDER || 'elevenlabs').trim().toLowerCase();
     const voiceId = config.voiceId || this.tts.voiceId || 'default';
     const cacheKey = ttsCache.generateKey(providerName, voiceId, greeting);
     const cachedAudio = ttsCache.get(cacheKey);
@@ -417,7 +411,7 @@ class ConversationManager extends EventEmitter {
 
     this.usageTracker.addSTTDuration(this.usageTracker.finalize().callDurationSeconds);
     const usage = this.usageTracker.usage;
-    const cost = this.costCalculator.calculateCost(usage);
+    const cost = this.costCalculator.calculateCost(usage, this.providerConfig);
 
     console.log('[ConversationManager] Final Usage:', usage);
     console.log('[ConversationManager] Estimated Cost:', cost);

@@ -36,6 +36,7 @@ class SarvamTTSProvider extends TTSProvider {
   feedText(text) {
     if (!text || !text.trim()) return;
     this.textBuffer += text;
+    this.emit('tts_characters', text.length);
   }
 
   async flush() {
@@ -45,12 +46,15 @@ class SarvamTTSProvider extends TTSProvider {
     this.textBuffer = ''; // clear buffer early
     this.isGenerating = true;
     
+    let targetLang = this.language;
+    if (targetLang === 'en-US') targetLang = 'en-IN';
+
     try {
-      console.log(`[SarvamTTSProvider] Synthesizing text length ${textToSynthesize.length} for ${this.language}...`);
+      console.log(`[SarvamTTSProvider] Synthesizing text length ${textToSynthesize.length} for ${targetLang}...`);
       
       const response = await this.client.textToSpeech.convertStream({
         text: textToSynthesize,
-        target_language_code: this.language,
+        target_language_code: targetLang,
         speaker: this.voiceId,
         model: "bulbul:v3",
         pace: 1,
