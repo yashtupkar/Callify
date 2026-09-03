@@ -31,13 +31,11 @@ const { OpenAI } = require('openai');
 // ---------------------------------------------------------------------------
 const GENERATION_SYSTEM_PROMPT = `You are an expert AI conversation designer specialising in voice calling agents for businesses.
 
-Your task: given an agent configuration, write structured "Conversation Guidelines" that define the exact step-by-step call flow the AI agent must follow.
+Your task: given an agent configuration, write structured "Conversation Guidelines" that define the exact call flow the AI agent must follow.
 
 REQUIRED FORMAT:
-- Write in clear, imperative prose (third-person passive or imperative, e.g. "The caller is greeted..." or "Ask for...").
-- Organise into numbered PHASES that cover the full call lifecycle.
-- Inside each phase, list steps sequentially — one action per step.
-- Use "[TOOL: tool_name]" notation at the exact step where a tool call must happen.
+- Write in clear, imperative prose (e.g. "Greet the caller warmly..." or "Ask for...").
+- Organise the flow logically from greeting to wrap-up, focusing on topic order and question framing (e.g., "ask about symptoms before offering appointment types").
 - Include a "Sequential Flow" rule at the top (one question at a time, await response).
 - Include a "Zero-Loop Policy" (never repeat text verbatim; re-asks are shorter).
 - End with a "Guardrails" section listing what the agent must NEVER do.
@@ -45,9 +43,11 @@ REQUIRED FORMAT:
 - Tailor every detail to the specific industry, agent purpose, and available tools.
 
 DO NOT include:
+- Numbered PHASES (e.g. "Phase 1:", "Phase 2:").
+- [TOOL: ...] markers or explicit tool-calling notations. (Tool calling is handled dynamically by the system).
 - JSON, markdown headers, code blocks, or bullet-point lists.
 - Generic platitudes like "provide excellent service" or "be empathetic".
-- Instructions that duplicate the core prompt rules (tool calling, voice style, etc.).
+- Instructions that duplicate the core prompt rules (tool calling mechanics, voice style, etc.).
 
 OUTPUT: Return ONLY the guidelines text, starting directly with "Sequential Flow:".`.trim();
 
@@ -141,11 +141,11 @@ function _buildAgentDescription(cfg) {
     }
   }
   // Always mention the internal CRM tools
-  toolNames.push('internal_check_availability: Check the agent\'s calendar for open slots on a given date');
-  toolNames.push('internal_create_booking: Book an appointment on the internal calendar');
-  toolNames.push('internal_cancel_booking: Cancel an existing appointment by booking ID');
-  toolNames.push('internal_reschedule_booking: Move an existing appointment to a new date/time');
-  toolNames.push('internal_get_bookings: Retrieve the caller\'s existing bookings');
+  toolNames.push('check_availability: Check the agent\'s calendar for open slots on a given date');
+  toolNames.push('create_booking: Book an appointment on the internal calendar');
+  toolNames.push('cancel_booking: Cancel an existing appointment by booking ID');
+  toolNames.push('reschedule_booking: Move an existing appointment to a new date/time');
+  toolNames.push('get_bookings: Retrieve the caller\'s existing bookings');
   toolNames.push('save_collected_data: Save caller contact info (name, phone, email, etc.) to the CRM');
   toolNames.push('end_call: End the phone call after a polite goodbye');
 

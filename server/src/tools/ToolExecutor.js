@@ -134,12 +134,41 @@ class ToolExecutor {
     const signal = this._abortController.signal;
 
     // -------------------------------------------------------------------------
+    // SYSTEM: record_field
+    // -------------------------------------------------------------------------
+    if (toolName === 'record_field') {
+      console.log('[ToolExecutor] Recorded field:', args);
+      
+      const stateManager = this.getStateManager();
+      if (stateManager && args.field && args.value) {
+        stateManager.markFieldCollected(args.field, args.value);
+      }
+      
+      this.tts.flush(); // Flush the TTS stream since the text was streamed
+      
+      const toolCallId = this._appendToolCall(toolName, args, preamble, llmToolCallId);
+      this._appendToolResult(toolName, toolCallId, { success: true });
+      
+      // If the LLM called this silently without outputting acknowledgment text,
+      // we MUST re-prompt it so it continues the conversation.
+      if (!preamble || !preamble.trim()) {
+        console.log('[ToolExecutor] record_field called without text. Re-prompting LLM.');
+        this._rePromptLLM('auto');
+      }
+      
+      return;
+    }
+
+    // -------------------------------------------------------------------------
     // SYSTEM: save_collected_data
     // -------------------------------------------------------------------------
     if (toolName === 'save_collected_data') {
       // Guard: ignore duplicate calls within the same conversation
       if (this._dataSaved) {
         console.warn('[ToolExecutor] save_collected_data called again — already saved. Ignoring duplicate.');
+        const toolCallId = this._appendToolCall(toolName, args, preamble, llmToolCallId);
+        this._appendToolResult(toolName, toolCallId, { success: true, note: "Data was already saved previously." });
+        this._rePromptLLM('auto');
         return;
       }
 
@@ -175,9 +204,9 @@ class ToolExecutor {
       if (this.agentId) {
         try {
           // Extract known fields (case insensitive), treat empty strings as absent
-          const nameKey = Object.keys(args).find(k => k.toLowerCase() === 'name');
-          const emailKey = Object.keys(args).find(k => k.toLowerCase() === 'email');
-          const phoneKey = Object.keys(args).find(k => k.toLowerCase() === 'phone');
+          const nameKey = Object.keys(args).find(k => k.toLowerCase().includes('name'));
+          const emailKey = Object.keys(args).find(k => k.toLowerCase().includes('email'));
+          const phoneKey = Object.keys(args).find(k => k.toLowerCase().includes('phone'));
           
           const name = (nameKey && args[nameKey]?.trim()) ? String(args[nameKey]).trim() : null;
           const email = (emailKey && args[emailKey]?.trim()) ? String(args[emailKey]).trim() : null;
@@ -344,7 +373,7 @@ class ToolExecutor {
           }
         }
       } catch (err) {
-        console.error('[ToolExecutor] Error in internal_check_availability:', err);
+        console.error('[ToolExecutor] Error in check_availability:', err);
         result = { error: err.message };
       }
       
@@ -403,7 +432,7 @@ class ToolExecutor {
           }
         }
       } catch (err) {
-        console.error('[ToolExecutor] Error in internal_create_booking:', err);
+        console.error('[ToolExecutor] Error in create_booking:', err);
         result = { error: err.message };
       }
 
@@ -450,7 +479,7 @@ class ToolExecutor {
           }
         }
       } catch (err) {
-        console.error('[ToolExecutor] Error in internal_get_bookings:', err);
+        console.error('[ToolExecutor] Error get_bookings:', err);
         result = { error: err.message };
       }
       
@@ -488,7 +517,7 @@ class ToolExecutor {
           result = { success: true, message: 'Appointment successfully cancelled.' };
         }
       } catch (err) {
-        console.error('[ToolExecutor] Error in internal_cancel_booking:', err);
+        console.error('[ToolExecutor] Error in cancel_booking:', err);
         result = { error: err.message };
       }
       
@@ -541,7 +570,7 @@ class ToolExecutor {
           }
         }
       } catch (err) {
-        console.error('[ToolExecutor] Error in internal_reschedule_booking:', err);
+        console.error('[ToolExecutor] Error in reschedule_booking:', err);
         result = { error: err.message };
       }
       

@@ -259,6 +259,9 @@ class ToolRegistry {
     for (const { schema } of this._webhook.values())  schemas.push(schema);
     for (const { schema } of this._custom.values())   schemas.push(schema);
 
+    // Sort deterministically to maximize prompt cache hits
+    schemas.sort((a, b) => a.function.name.localeCompare(b.function.name));
+
     // end_call is always last — appended here so it never accidentally gets
     // listed before action tools (model should complete the task before ending)
     schemas.push({
@@ -330,6 +333,33 @@ class ToolRegistry {
     // We don't use registerBuiltIn because save_collected_data is handled
     // directly by ToolExecutor (complex lifecycle / re-prompt behaviour).
     this._builtIn.set('save_collected_data', { schema, fillerKey: 'save_collected_data' });
+
+    // Inject record_field alongside it
+    this._builtIn.set('record_field', {
+      schema: {
+        type: "function",
+        function: {
+          name: "record_field",
+          description: "Silently record a single piece of collected caller information in the background.",
+          parameters: {
+            type: "object",
+            properties: {
+              field: {
+                type: "string",
+                description: "The name of the field collected (e.g. 'Name', 'Phone', 'Email')."
+              },
+              value: {
+                type: "string",
+                description: "The value of the field collected."
+              }
+            },
+            required: ["field", "value"],
+            additionalProperties: false
+          }
+        }
+      },
+      fillerKey: 'generic'
+    });
   }
 
   /**

@@ -485,7 +485,7 @@ export default function AgentConfig({
               <Button 
                 variant="outline" 
                 size="sm" 
-                className="h-8 gap-1.5 text-xs bg-card text-primary border-primary/20 hover:bg-primary/10" 
+                className="h-8 gap-1.5 text-xs  text-primary border-primary/20 hover:bg-primary/10" 
                 onClick={generateGuidelines}
                 disabled={isGeneratingGuidelines || !activeAgentId}
               >

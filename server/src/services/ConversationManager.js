@@ -324,7 +324,16 @@ class ConversationManager extends EventEmitter {
   // this.transcript itself still keeps everything for the DB save at the end.
   getRecentTranscript() {
     if (this.transcript.length <= this.MAX_CONTEXT_MESSAGES) return this.transcript;
-    return this.transcript.slice(-this.MAX_CONTEXT_MESSAGES);
+    
+    let startIndex = this.transcript.length - this.MAX_CONTEXT_MESSAGES;
+    
+    // Boundary-aware trim: ensure we don't split a tool_call from its tool result.
+    // If the slice lands on a 'tool' result, walk backward to include the 'assistant' message that spawned it.
+    while (startIndex > 0 && this.transcript[startIndex].role === 'tool') {
+      startIndex--;
+    }
+    
+    return this.transcript.slice(startIndex);
   }
 
   handleIncomingAudio(audioBuffer) {
@@ -335,6 +344,10 @@ class ConversationManager extends EventEmitter {
 
   handleUserUtterance(text) {
     if (!this.isCallActive) return;
+
+    if (this.stateManager && this.stateManager.phase === 'GREETING') {
+      this.stateManager.startCollecting();
+    }
 
     // Message Consolidation: Combine consecutive user messages to save token overhead
     if (this.transcript.length > 0) {

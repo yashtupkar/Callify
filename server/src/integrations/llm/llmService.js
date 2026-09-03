@@ -46,10 +46,14 @@ class LLMService extends LLMProvider {
       this.abort();
       this.abortController = new AbortController();
 
+      const systemMessage = { role: 'system', content: this.systemPrompt };
+      // Explicit cache_control for Anthropic via OpenRouter; ignored by OpenAI
+      systemMessage.cache_control = { type: "ephemeral" };
+
       // Build the messages array:
       //   [system prompt] + [transcript] + [optional per-turn context injection]
       const messages = [
-        { role: 'system', content: this.systemPrompt },
+        systemMessage,
         ...transcript,
         ...(contextInjection ? [contextInjection] : []),
       ];
@@ -78,6 +82,20 @@ class LLMService extends LLMProvider {
       let fullReply    = "";
       // Support multiple parallel tool calls (e.g. models that batch tool invocations)
       const toolCallsMap = {};  // id -> { id, name, argsStr }
+      
+      let isToolCallDetected = false;
+      let textBuffer = "";
+      let bufferTimeout = null;
+      let initialBufferComplete = false;
+      let allowTextStreaming = true; // True by default, disabled if action tool detected
+
+      const flushBuffer = () => {
+        if (textBuffer.length > 0 && allowTextStreaming) {
+          this.emit('llm_token', textBuffer);
+          textBuffer = "";
+        }
+        initialBufferComplete = true;
+      };
 
       for await (const chunk of stream) {
         if (chunk.usage) {
@@ -93,6 +111,7 @@ class LLMService extends LLMProvider {
 
         // ----- Tool call streaming accumulation -----
         if (delta.tool_calls) {
+          isToolCallDetected = true;
           for (const tc of delta.tool_calls) {
             const idx = tc.index !== undefined ? tc.index : 0;
             if (!toolCallsMap[idx]) {
@@ -103,13 +122,43 @@ class LLMService extends LLMProvider {
             if (tc.function && tc.function.name)      entry.name    = tc.function.name;
             if (tc.function && tc.function.arguments) entry.argsStr += tc.function.arguments;
           }
+          
+          // Determine if we should allow text streaming
+          const hasActionTool = Object.values(toolCallsMap).some(tc => tc.name && tc.name !== 'record_field');
+          const hasOnlySilentTools = Object.values(toolCallsMap).every(tc => !tc.name || tc.name === 'record_field');
+          
+          if (hasActionTool) {
+             allowTextStreaming = false;
+             if (bufferTimeout) { clearTimeout(bufferTimeout); bufferTimeout = null; }
+          } else if (hasOnlySilentTools && Object.values(toolCallsMap).some(tc => tc.name === 'record_field')) {
+             if (!initialBufferComplete) flushBuffer();
+          }
         }
 
         // ----- Text token streaming -----
         if (delta.content) {
           fullReply += delta.content;
-          this.emit('llm_token', delta.content);
+          
+          if (!isToolCallDetected) {
+            if (initialBufferComplete) {
+              if (allowTextStreaming) this.emit('llm_token', delta.content);
+            } else {
+              textBuffer += delta.content;
+              if (!bufferTimeout) {
+                 bufferTimeout = setTimeout(() => {
+                   if (allowTextStreaming) flushBuffer();
+                 }, 200);
+              }
+            }
+          } else if (allowTextStreaming) {
+            this.emit('llm_token', delta.content);
+          }
         }
+      }
+      
+      if (bufferTimeout) clearTimeout(bufferTimeout);
+      if (allowTextStreaming && textBuffer.length > 0) {
+        flushBuffer();
       }
 
       // ----- Emit completed tool calls -----

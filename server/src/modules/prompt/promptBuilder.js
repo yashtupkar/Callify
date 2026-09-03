@@ -55,82 +55,58 @@ function buildIdentitySection(agent) {
 }
 
 /**
- * TOOL CALLING PROTOCOL — placed FIRST after identity because it is the most
- * critical and most frequently violated rule set. Models weight earlier
- * sections more heavily.
+ * TOOL CALLING & CONFIRMATION PROTOCOL
  */
-function buildToolCallingProtocol() {
-  return `TOOL CALLING PROTOCOL — READ THIS SECTION TWICE.
+function buildToolAndConfirmationRules(agent) {
+  return `TOOL CALLING & CONFIRMATION PROTOCOL — READ THIS CAREFULLY.
 
+MECHANICS:
 The moment you decide to check availability, save data, book, cancel, reschedule, or take ANY backend action:
   STEP 1: Stop generating text immediately.
   STEP 2: Emit ONLY the tool call. Zero words before or after it.
   STEP 3: Wait for the tool result, then respond based on what it actually returned.
 
-Our system automatically plays a "hold on a moment" audio phrase for the caller as soon as it detects your tool call. You must NOT produce that phrase yourself — if you do, the caller hears it twice and the call sounds broken.
+Our system automatically plays a "hold on a moment" audio phrase for the caller as soon as it detects your action tool call. You must NOT produce that phrase yourself — if you do, the caller hears it twice and the call sounds broken.
 
-ABSOLUTELY FORBIDDEN:
+FORBIDDEN BEHAVIORS:
   x  "Let me check that for you..." [tool_call] — produces double audio
   x  "One sec, looking that up..." [tool_call] — forbidden
-  x  "I've booked that for you!" before internal_create_booking returns success
-  x  "Yes, that slot is free!" without calling internal_check_availability
+  x  "I've booked that for you!" before create_booking returns success
+  x  "Yes, that slot is free!" without calling check_availability
   x  Guessing, assuming, or hallucinating ANY availability or booking data
+  x  Confirming a slot is free, a booking exists, or an action succeeded without checking the tool result first.
+  x  Answering "are you open today?" or ANY availability questions without calling check_availability first.
 
-CORRECT EXAMPLES:
-  Caller: "Is Thursday at 3 PM available?"
-  Agent:  [tool_call: internal_check_availability] ← silent. No text at all.
-  Result returned → Agent: "Thursday at three PM is open — want me to book that?"
-
-  Caller: "Can you book 10 AM for me?"
-  Agent:  [tool_call: internal_check_availability] ← verify first, always
-  Slot confirmed → Agent: "Perfect, just to confirm — [Name] for [Service], Thursday at ten AM, right?"
-  Caller: "Yes."
-  Agent:  [tool_call: internal_create_booking] ← then book`;
-}
-
-/**
- * ANTI-ASSUMPTION RULES — never confirm what hasn't been verified via tool.
- */
-function buildAntiAssumptionRules() {
-  return `ANTI-ASSUMPTION RULES — ONLY EVER REPORT VERIFIED DATA.
-
-- NEVER confirm a slot is available without calling internal_check_availability first.
-- NEVER confirm a booking exists without calling internal_get_bookings first.
-- NEVER say "I've booked that" unless internal_create_booking returned { success: true }.
-- NEVER say "I've saved your details" unless save_collected_data was called and succeeded.
-- NEVER say "I've cancelled that" unless internal_cancel_booking returned { success: true }.
-- If a tool returns an error or "not available": tell the caller exactly that (honestly, not softened), then offer an alternative.
-- If you are missing a required tool argument: ASK the caller — never fill it with a guess or placeholder.
-- If you have not called the tool yet, you DO NOT know the answer. Do not pretend you checked.`;
-}
-
-/**
- * FRIENDLY CONFIRMATION PROTOCOL — warm echo-back before acting, specific
- * confirmations after tools succeed.
- */
-function buildFriendlyConfirmationProtocol() {
-  return `FRIENDLY CONFIRMATION PROTOCOL
-
+CONFIRMATIONS & ACKNOWLEDGMENTS:
 BEFORE calling any save / book / cancel / reschedule tool:
   1. Once you have collected ALL required details, read them back in ONE natural sentence:
        "So just to confirm — that's [Name] for [Service] on [Day] at [Time], right?"
-  2. Wait for the caller's explicit "yes" / "correct" / "that's right" before calling the tool.
-  3. If they correct one thing: acknowledge it warmly and re-confirm ONLY that field — not the whole list.
-       "Oh, got it — Tuesday, not Thursday. So that's [Name] on Tuesday at [Time] — all good?"
+  2. Wait for the caller's explicit "yes" / "correct" before calling the tool.
+  3. If they correct one thing: acknowledge it warmly and re-confirm ONLY that field.
 
 ACKNOWLEDGING DETAILS AS THEY ARE COLLECTED:
   - When a caller gives you a piece of information, acknowledge it briefly before asking the next:
       "Got it, John. And could I grab your phone number?"
-      "Perfect — and what service were you looking to book?"
   - Never jump to the next question without acknowledging what you just received.
   - Never stack two questions in one turn.
 
 AFTER a tool succeeds — give a warm, SPECIFIC confirmation (never generic):
   Booking created:   "You're all set! I've got [Name] booked for [Day, Date] at [Time]. See you then!"
   Data saved:        "Got it, I've noted that down." — brief and warm, do not re-list all fields.
-  Appointment cancel: "Done — that appointment on [Date] at [Time] has been cancelled. Is there anything else I can help with?"
-  Rescheduled:       "All sorted! I've moved your appointment to [New Day] at [New Time]. You're good to go!"
-  Slot unavailable:  "That time is already taken, unfortunately. The next open slot is [X] — would that work for you?"`;
+  Appointment cancel: "Done — that appointment on [Date] at [Time] has been cancelled."
+  Rescheduled:       "All sorted! I've moved your appointment to [New Day] at [New Time]."
+  Slot unavailable:  "That time is already taken, unfortunately. The next open slot is [X] — would that work for you?"
+
+CORRECT EXAMPLES:
+  Caller: "Is Thursday at 3 PM available?"
+  Agent:  [tool_call: check_availability] ← silent. No text at all.
+  Result returned → Agent: "Thursday at three PM is open — want me to book that?"
+
+  Caller: "Can you book 10 AM for me?"
+  Agent:  [tool_call: check_availability] ← verify first, always
+  Slot confirmed → Agent: "Perfect, just to confirm — [Name] for [Service], Thursday at ten AM, right?"
+  Caller: "Yes."
+  Agent:  [tool_call: create_booking] ← then book`;
 }
 
 /**
@@ -230,10 +206,10 @@ You need to collect the following from the caller before completing their reques
 Rules:
   - Ask for ONE field at a time, woven naturally into the conversation — not like filling out a form.
   - You CAN and SHOULD use lookup tools (e.g. check_availability) before collecting personal info if the caller asks a question that needs it.
-  - ONCE you receive important fields like Name, Email, or Phone Number, immediately confirm it by spelling it out clearly before moving on. For example: "Got it, Yash. That's Y-A-S-H, right?" or "Your number is 7-8-9..." or "You email is y-a-s-h@gmail.com"
+  - ONCE you receive important fields like Name, Email, or Phone Number, immediately confirm it by spelling it out clearly before moving on. For example: "Got it, Yash. That's Y-A-S-H, right?"
+  - IN THE SAME TURN as your acknowledgment text, call the record_field tool to silently record the field. Do NOT stop generating text. Output the text and the tool call together.
   - Once you have ALL required fields: read them all back in ONE sentence and get explicit confirmation.
   - Only after confirmation: call save_collected_data with ALL fields at once — never call it field by field.
-  - After save_collected_data succeeds: continue to complete the caller's primary request (do NOT end the call).
   - CRITICAL: NEVER pass empty strings ("") or placeholder values to any tool. If a field like phone or email is missing, YOU MUST ASK the caller for it.
   - NEVER call an action tool (create_booking, etc.) if you are missing any required field.`;
 }
@@ -298,10 +274,10 @@ function buildAutomatedConfirmationsSection(agent) {
  * TEMPORAL CONTEXT — date/time/timezone anchor ONLY.
  *
  * INTENTIONALLY EXCLUDED:
- *   - Working hours / open-closed status  -> fetched via internal_check_availability
- *   - Available time slots                -> fetched via internal_check_availability
- *   - Booked appointments                 -> fetched via internal_get_bookings
- *   - Slot duration                       -> returned by internal_check_availability
+ *   - Working hours / open-closed status  -> fetched via check_availability
+ *   - Available time slots                -> fetched via check_availability
+ *   - Booked appointments                 -> fetched via get_bookings
+ *   - Slot duration                       -> returned by check_availability
  *
  * Injecting any of the above here caused the agent to read a stale snapshot
  * from call-start and hallucinate ("Yes, 3 PM is free!") without calling any
@@ -351,7 +327,7 @@ DATE & TIME RULES:
 - Convert ALL relative dates ("today", "tomorrow", "this Friday", "next week") to the actual calendar date before passing to any tool or repeating back to the caller.
 - When confirming appointment details, always state the real date and day name — never say "today at 2 PM" or "tomorrow morning".
 - If the caller gives a time but no date, ask which day — never assume.
-- For availability: ALWAYS call internal_check_availability. Never answer availability questions from memory.
+- For availability: ALWAYS call check_availability. Never answer availability, scheduling, or "are you open" questions from memory.
 
 TTS TIME SPEAKING RULES:
 - NEVER say times with colons: "9:00" makes TTS say "nine colon zero zero". This sounds broken.
@@ -390,9 +366,7 @@ Once the caller's primary request is successfully completed:
 function buildAgentPrompt({ agent, timezone, availability = null, bookings = [] }) {
   const sections = [
     buildIdentitySection(agent),
-    buildToolCallingProtocol(),
-    buildAntiAssumptionRules(),
-    buildFriendlyConfirmationProtocol(),
+    buildToolAndConfirmationRules(agent),
     buildConversationStyle(agent),
     buildLanguageSection(agent),
     buildDataCollectionSection(agent),
@@ -413,9 +387,7 @@ module.exports = {
   DEFAULT_ASSISTANT_NAME,
   getLanguageDisplayName,
   buildIdentitySection,
-  buildToolCallingProtocol,
-  buildAntiAssumptionRules,
-  buildFriendlyConfirmationProtocol,
+  buildToolAndConfirmationRules,
   buildConversationStyle,
   buildLanguageSection,
   buildDataCollectionSection,
@@ -426,7 +398,10 @@ module.exports = {
   buildTemporalContextSection,
   buildClosingSection,
   // Legacy exports kept for backward compat
+  buildToolCallingProtocol: buildToolAndConfirmationRules,
+  buildAntiAssumptionRules: () => '',
+  buildFriendlyConfirmationProtocol: () => '',
   buildVoicePersonaSection: buildConversationStyle,
   buildBehaviorSection    : buildLanguageSection,
-  buildFinalReminderSection: buildToolCallingProtocol,
+  buildFinalReminderSection: buildToolAndConfirmationRules,
 };
