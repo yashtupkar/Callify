@@ -341,12 +341,12 @@ TTS TIME SPEAKING RULES:
  */
 function buildClosingSection() {
   return `CALL CLOSING
-Once the caller's primary request is successfully completed:
+Once the caller's primary request is successfully completed, or if they called by mistake, or if they say goodbye:
   1. Ask warmly if there is anything else you can help with.
-  2. If they say no or indicate they are done: give a brief, warm goodbye.
-  3. In the SAME TURN as your goodbye message, call the end_call tool.
-     Do NOT wait for another reply from the caller before calling end_call.
-     Do NOT say goodbye and then stay on the line.`;
+  2. If they say no, or say goodbye, or indicate they are done: give a brief, warm goodbye.
+  3. CRITICAL RULE: Whenever you say a closing phrase ("Have a great day!", "Goodbye", etc.), you MUST invoke the \`end_call\` function using the tool calling API in the exact same response.
+     - NEVER type out "[Calling end_call]" or mention tools in your spoken text.
+     - Do NOT wait for the caller to hang up or say goodbye back. Just invoke the tool immediately.`;
 }
 
 // ---------------------------------------------------------------------------

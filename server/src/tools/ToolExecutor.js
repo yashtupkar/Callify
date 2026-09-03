@@ -95,7 +95,7 @@ class ToolExecutor {
    * @param {string} toolName
    * @param {object} args
    */
-  async handle(toolName, args, preamble, llmToolCallId) {
+  async handle(toolName, args, preamble, llmToolCallId, shouldReprompt = true) {
     console.log(`[ToolExecutor] Tool called: ${toolName}`, args);
     this.usageTracker.incrementToolCall();
 
@@ -109,6 +109,8 @@ class ToolExecutor {
     // -------------------------------------------------------------------------
     if (toolName === 'end_call') {
       console.log('[ToolExecutor] Queuing end of conversation after TTS finishes.');
+      
+      this.tts.flush(); // Flush the TTS stream so the goodbye message is spoken
       
       let ended = false;
       const doEnd = () => {
@@ -153,7 +155,7 @@ class ToolExecutor {
       // we MUST re-prompt it so it continues the conversation.
       if (!preamble || !preamble.trim()) {
         console.log('[ToolExecutor] record_field called without text. Re-prompting LLM.');
-        this._rePromptLLM('auto');
+        if (shouldReprompt) this._rePromptLLM('auto');
       }
       
       return;
@@ -168,7 +170,7 @@ class ToolExecutor {
         console.warn('[ToolExecutor] save_collected_data called again — already saved. Ignoring duplicate.');
         const toolCallId = this._appendToolCall(toolName, args, preamble, llmToolCallId);
         this._appendToolResult(toolName, toolCallId, { success: true, note: "Data was already saved previously." });
-        this._rePromptLLM('auto');
+        if (shouldReprompt) this._rePromptLLM('auto');
         return;
       }
 
@@ -189,7 +191,7 @@ class ToolExecutor {
         const stateManager = this.getStateManager();
         if (stateManager) stateManager.onToolResult(toolName, result);
         
-        this._rePromptLLM('auto');
+        if (shouldReprompt) this._rePromptLLM('auto');
         return;
       }
 
@@ -269,7 +271,7 @@ class ToolExecutor {
 
       // Re-prompt LLM, requiring it to call the NEXT tool (since we just saved data,
       // it should now call create_booking or whatever the primary action is).
-      this._rePromptLLM('required');
+      if (shouldReprompt) this._rePromptLLM('required');
       return;
     }
 
@@ -385,7 +387,7 @@ class ToolExecutor {
       const stateManager = this.getStateManager();
       if (stateManager) stateManager.onToolResult(toolName, result);
       
-      this._rePromptLLM('auto');
+      if (shouldReprompt) this._rePromptLLM('auto');
       return;
     }
 
@@ -444,7 +446,7 @@ class ToolExecutor {
       const stateManager = this.getStateManager();
       if (stateManager) stateManager.onToolResult(toolName, result);
 
-      this._rePromptLLM('auto');
+      if (shouldReprompt) this._rePromptLLM('auto');
       return;
     }
 
@@ -491,7 +493,7 @@ class ToolExecutor {
       const stateManager = this.getStateManager();
       if (stateManager) stateManager.onToolResult(toolName, result);
       
-      this._rePromptLLM('auto');
+      if (shouldReprompt) this._rePromptLLM('auto');
       return;
     }
 
@@ -529,7 +531,7 @@ class ToolExecutor {
       const stateManager = this.getStateManager();
       if (stateManager) stateManager.onToolResult(toolName, result);
       
-      this._rePromptLLM('auto');
+      if (shouldReprompt) this._rePromptLLM('auto');
       return;
     }
 
@@ -582,7 +584,7 @@ class ToolExecutor {
       const stateManager = this.getStateManager();
       if (stateManager) stateManager.onToolResult(toolName, result);
       
-      this._rePromptLLM('auto');
+      if (shouldReprompt) this._rePromptLLM('auto');
       return;
     }
 
@@ -604,7 +606,7 @@ class ToolExecutor {
       const stateManager = this.getStateManager();
       if (stateManager) stateManager.onToolResult(toolName, result);
       
-      this._rePromptLLM('auto');
+      if (shouldReprompt) this._rePromptLLM('auto');
       return;
     }
 
@@ -647,7 +649,7 @@ class ToolExecutor {
       const stateManager = this.getStateManager();
       if (stateManager) stateManager.onToolResult(toolName, result);
       
-      this._rePromptLLM('auto');
+      if (shouldReprompt) this._rePromptLLM('auto');
       return;
     }
 
@@ -690,7 +692,7 @@ class ToolExecutor {
       const stateManager = this.getStateManager();
       if (stateManager) stateManager.onToolResult(toolName, result);
       
-      this._rePromptLLM('auto');
+      if (shouldReprompt) this._rePromptLLM('auto');
       return;
     }
 
@@ -716,7 +718,7 @@ class ToolExecutor {
       const stateManager = this.getStateManager();
       if (stateManager) stateManager.onToolResult(toolName, result);
       
-      this._rePromptLLM('auto');
+      if (shouldReprompt) this._rePromptLLM('auto');
       return;
     }
 
@@ -742,7 +744,7 @@ class ToolExecutor {
       const stateManager = this.getStateManager();
       if (stateManager) stateManager.onToolResult(toolName, result);
       
-      this._rePromptLLM('auto');
+      if (shouldReprompt) this._rePromptLLM('auto');
       return;
     }
 
@@ -774,7 +776,7 @@ class ToolExecutor {
       const stateManager = this.getStateManager();
       if (stateManager) stateManager.onToolResult(toolName, result);
       
-      this._rePromptLLM('auto');
+      if (shouldReprompt) this._rePromptLLM('auto');
       return;
     }
 
@@ -785,14 +787,7 @@ class ToolExecutor {
       console.log(`[ToolExecutor] Routing custom tool "${toolName}" to frontend.`);
       this._playFiller('generic', preamble);
 
-      const toolCallId = this._appendToolCall(toolName, args, preamble, llmToolCallId);
-
-      this.sendToClient({
-        event: 'tool_execution_request',
-        toolName,
-        args,
-        toolCallId
-      });
+      this._appendToolCall(toolName, args, preamble, llmToolCallId, true);
       return;
     }
 
@@ -807,7 +802,7 @@ class ToolExecutor {
   // ---------------------------------------------------------------------------
 
   /** Append an assistant tool_call message to the transcript. Returns the toolCallId. */
-  _appendToolCall(toolName, args, preamble, llmToolCallId) {
+  _appendToolCall(toolName, args, preamble, llmToolCallId, isFrontend = false) {
     const toolCallId = llmToolCallId || ("call_" + Math.random().toString(36).substring(7));
     this.transcript.push({
       role: 'assistant',
@@ -817,6 +812,14 @@ class ToolExecutor {
         type: "function",
         function: { name: toolName, arguments: JSON.stringify(args) }
       }]
+    });
+    this.sendToClient({
+      event: 'tool_call_started',
+      toolName,
+      args,
+      toolCallId,
+      isFrontend,
+      timestamp: Date.now()
     });
     return toolCallId;
   }
@@ -828,6 +831,13 @@ class ToolExecutor {
       tool_call_id: toolCallId,
       name: toolName,
       content: JSON.stringify(result)
+    });
+    this.sendToClient({
+      event: 'tool_call_completed',
+      toolName,
+      toolCallId,
+      result,
+      timestamp: Date.now()
     });
   }
 

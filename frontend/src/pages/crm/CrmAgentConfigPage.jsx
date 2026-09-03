@@ -40,7 +40,7 @@ export default function CrmAgentConfigPage() {
 
   const {
     isConnected, isAgentSpeaking, transcript, usage, cost,
-    startSession, endSession, sendTextMessage
+    startSession, endSession, sendTextMessage, completeToolCall
   } = useVoiceSession(WS_URL);
   const [showAnalytics, setShowAnalytics] = useState(false);
 
@@ -285,6 +285,7 @@ export default function CrmAgentConfigPage() {
                 onStartCall={handleStartCall}
                 onEndCall={endSession}
                 onSendText={sendTextMessage}
+                onCompleteToolCall={completeToolCall}
               />
             </div>
           ) : (

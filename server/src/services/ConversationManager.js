@@ -180,9 +180,21 @@ class ConversationManager extends EventEmitter {
       console.error('[ConversationManager] LLM Error:', err);
     });
 
-    this.llm.on('tool_call', (toolName, args, preamble, llmToolCallId) => {
-      // Filler logic moved entirely to ToolExecutor
-      this.toolExecutor.handle(toolName, args, preamble, llmToolCallId);
+    this.llm.on('tool_calls', async (toolCallEntries, fullReply) => {
+      // Process tool calls sequentially to prevent race conditions on shared DB state
+      for (let i = 0; i < toolCallEntries.length; i++) {
+        const tc = toolCallEntries[i];
+        if (tc.name) {
+          let args = {};
+          try { args = tc.argsStr.trim() ? JSON.parse(tc.argsStr) : {}; } catch (e) {}
+          
+          const isLast = (i === toolCallEntries.length - 1);
+          // Pass preamble only to the first tool call to avoid duplicate speech
+          const preamble = (i === 0) ? fullReply : '';
+          
+          await this.toolExecutor.handle(tc.name, args, preamble, tc.id, isLast);
+        }
+      }
     });
 
     // TTS Events
@@ -389,6 +401,16 @@ class ConversationManager extends EventEmitter {
       tool_call_id: targetId || ("call_" + Math.random().toString(36).substring(7)),
       name: toolName,
       content: JSON.stringify(result)
+    });
+    
+    // Notify the frontend that the tool call has completed so it can
+    // update the transcript UI with the result and timing.
+    this.sendToClient({
+      event: 'tool_call_completed',
+      toolName,
+      toolCallId: targetId || toolCallId,
+      result,
+      timestamp: Date.now()
     });
     
     // Update state manager based on tool result

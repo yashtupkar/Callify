@@ -124,13 +124,14 @@ class LLMService extends LLMProvider {
           }
           
           // Determine if we should allow text streaming
-          const hasActionTool = Object.values(toolCallsMap).some(tc => tc.name && tc.name !== 'record_field');
-          const hasOnlySilentTools = Object.values(toolCallsMap).every(tc => !tc.name || tc.name === 'record_field');
+          // record_field and end_call are allowed to have preamble text that is spoken
+          const hasActionTool = Object.values(toolCallsMap).some(tc => tc.name && tc.name !== 'record_field' && tc.name !== 'end_call');
+          const hasOnlySilentTools = Object.values(toolCallsMap).every(tc => !tc.name || tc.name === 'record_field' || tc.name === 'end_call');
           
           if (hasActionTool) {
              allowTextStreaming = false;
              if (bufferTimeout) { clearTimeout(bufferTimeout); bufferTimeout = null; }
-          } else if (hasOnlySilentTools && Object.values(toolCallsMap).some(tc => tc.name === 'record_field')) {
+          } else if (hasOnlySilentTools && Object.values(toolCallsMap).some(tc => tc.name === 'record_field' || tc.name === 'end_call')) {
              if (!initialBufferComplete) flushBuffer();
           }
         }
@@ -164,32 +165,8 @@ class LLMService extends LLMProvider {
       // ----- Emit completed tool calls -----
       const toolCallEntries = Object.values(toolCallsMap);
       if (toolCallEntries.length > 0) {
-        // Primary tool call (first / only)
-        const primary = toolCallEntries[0];
-        if (primary.name) {
-          try {
-            const args = primary.argsStr.trim() ? JSON.parse(primary.argsStr) : {};
-            // fullReply is the preamble text the model may have produced before the
-            // tool call (should be empty per prompt rules, but we pass it through
-            // so ToolExecutor can log / handle it gracefully).
-            this.emit('tool_call', primary.name, args, fullReply, primary.id);
-          } catch (e) {
-            console.error('[LLMService] Error parsing tool call arguments:', e, primary.argsStr);
-          }
-        }
-
-        // Additional parallel tool calls (rare, but supported)
-        for (let i = 1; i < toolCallEntries.length; i++) {
-          const tc = toolCallEntries[i];
-          if (tc.name) {
-            try {
-              const args = tc.argsStr.trim() ? JSON.parse(tc.argsStr) : {};
-              this.emit('tool_call', tc.name, args, '', tc.id);
-            } catch (e) {
-              console.error('[LLMService] Error parsing parallel tool call arguments:', e);
-            }
-          }
-        }
+        // Emit all tool calls at once instead of one by one
+        this.emit('tool_calls', toolCallEntries, fullReply);
         return; // Don't emit llm_reply_complete when a tool call was made
       }
 

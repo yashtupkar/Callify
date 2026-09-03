@@ -3,6 +3,13 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Phone, PhoneOff, User, Send, Loader2 } from 'lucide-react';
+import ToolCallCard from './ToolCallCard';
+
+function formatTime(timestamp) {
+  if (!timestamp) return '';
+  const d = new Date(timestamp);
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
 
 export default function TestInterface({
   agentName,
@@ -11,7 +18,8 @@ export default function TestInterface({
   transcript,
   onStartCall,
   onEndCall,
-  onSendText
+  onSendText,
+  onCompleteToolCall
 }) {
   const [chatInput, setChatInput] = useState('');
   const [isStarting, setIsStarting] = useState(false);
@@ -116,37 +124,66 @@ export default function TestInterface({
                 Transcript will appear here…
               </div>
             ) : (
-              <div className="space-y-4 pb-4">
-                {transcript.map((msg, i) => (
-                  <div key={i} className={`flex ${msg.speaker === 'user' ? 'justify-end' : 'justify-start'}`}>
-                    <div className={`flex gap-3 max-w-[85%] ${msg.speaker === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
-                      <Avatar className="w-7 h-7 mt-1 border border-zinc-800 shrink-0">
-                        {msg.speaker === 'user' ? (
-                          <div className="w-full h-full bg-zinc-800 flex items-center justify-center">
-                            <User className="w-3.5 h-3.5 text-zinc-300" />
-                          </div>
-                        ) : (
-                          <AvatarImage
-                            src={`https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(agentName || 'agent')}&backgroundColor=09090b`}
-                          />
-                        )}
-                      </Avatar>
-                      <div
-                        className={`p-3 rounded-2xl ${msg.speaker === 'user'
-                            ? 'bg-primary text-primary-foreground rounded-tr-sm'
-                            : 'bg-zinc-800 text-zinc-100 rounded-tl-sm'
-                          } ${!msg.isFinal ? 'opacity-70' : ''}`}
-                      >
-                        <p className="text-sm leading-relaxed whitespace-pre-wrap">{msg.text}</p>
-                        {!msg.isFinal && (
-                          <span className="inline-block w-1.5 h-1.5 ml-2 bg-current rounded-full animate-pulse" />
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                ))}
-                <div ref={bottomRef} />
-              </div>
+               <div className="space-y-4 pb-4">
+                 {transcript.map((msg, i) => {
+                   if (msg.type === 'tool_call') {
+                     return (
+                       <div key={i} className={`flex ${msg.speaker === 'user' ? 'justify-end' : 'justify-start'}`}>
+                         <div className="flex gap-3 max-w-[85%]">
+                           <Avatar className="w-7 h-7 mt-1 border border-zinc-800 shrink-0">
+                             <AvatarImage
+                               src={`https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(agentName || 'agent')}&backgroundColor=09090b`}
+                             />
+                             <AvatarFallback>AI</AvatarFallback>
+                           </Avatar>
+                           <div className="max-w-full">
+                             {msg.timestamp && (
+                               <div className="text-xs text-zinc-600 mb-1">{formatTime(msg.timestamp)}</div>
+                             )}
+                             <ToolCallCard entry={msg} onComplete={onCompleteToolCall} />
+                           </div>
+                         </div>
+                       </div>
+                     );
+                   }
+                   return (
+                     <div key={i} className={`flex ${msg.speaker === 'user' ? 'justify-end' : 'justify-start'}`}>
+                       <div className={`flex gap-3 max-w-[85%] ${msg.speaker === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
+                         <Avatar className="w-7 h-7 mt-1 border border-zinc-800 shrink-0">
+                           {msg.speaker === 'user' ? (
+                             <div className="w-full h-full bg-zinc-800 flex items-center justify-center">
+                               <User className="w-3.5 h-3.5 text-zinc-300" />
+                             </div>
+                           ) : (
+                             <AvatarImage
+                               src={`https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(agentName || 'agent')}&backgroundColor=09090b`}
+                             />
+                           )}
+                         </Avatar>
+                         <div
+                           className={`p-3 rounded-2xl relative ${msg.speaker === 'user'
+                               ? 'bg-primary text-primary-foreground rounded-tr-sm'
+                               : 'bg-zinc-800 text-zinc-100 rounded-tl-sm'
+                             } ${!msg.isFinal ? 'opacity-70' : ''}`}
+                         >
+                           {msg.timestamp && (
+                             <div className="text-xs text-zinc-500 mb-1 opacity-80">
+                               {formatTime(msg.timestamp)}
+                             </div>
+                           )}
+                           <p className={`text-sm leading-relaxed whitespace-pre-wrap ${msg.speaker === 'user' ? '' : 'text-zinc-100'}`}>
+                             {msg.text}
+                           </p>
+                           {!msg.isFinal && (
+                             <span className="inline-block w-1.5 h-1.5 ml-2 bg-current rounded-full animate-pulse" />
+                           )}
+                         </div>
+                       </div>
+                     </div>
+                   );
+                 })}
+                 <div ref={bottomRef} />
+               </div>
             )}
           </div>
         </div>

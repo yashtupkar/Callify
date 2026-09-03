@@ -124,6 +124,7 @@ const DEFAULT_FILLERS = {
   ],
 };
 
+
 // Per-call cache of last-used filler index to avoid immediate repetition.
 // Keyed by "langKey:callId" — but since each ToolRegistry instance lives for
 // one call, a simple per-instance map suffices.
@@ -268,11 +269,15 @@ class ToolRegistry {
       type: "function",
       function: {
         name: "end_call",
-        description:
-          "Ends the current phone call. " +
-          "ONLY call this after you have said a warm, complete goodbye to the caller IN THE SAME TURN. " +
-          "Never call end_call before your goodbye text, and never call it mid-conversation.",
-      }
+        description: "Ends the conversation. Call this tool when you say goodbye to the caller.",
+        parameters: {
+          type: "object",
+          properties: {},
+          required: [],
+          additionalProperties: false
+        }
+      },
+      fillerKey: 'end_call'
     });
 
     return schemas;

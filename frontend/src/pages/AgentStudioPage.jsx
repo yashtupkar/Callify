@@ -57,7 +57,7 @@ export default function AgentStudioPage() {
 
   const {
     isConnected, isAgentSpeaking, transcript, usage, cost,
-    startSession, endSession, sendTextMessage
+    startSession, endSession, sendTextMessage, completeToolCall
   } = useVoiceSession(WS_URL);
 
   const [agents, setAgents] = useState([]);
@@ -334,6 +334,7 @@ export default function AgentStudioPage() {
             onStartCall={handleStartCall}
             onEndCall={endSession}
             onSendText={sendTextMessage}
+            onCompleteToolCall={completeToolCall}
           />
         </div>
       </div>

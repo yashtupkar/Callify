@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useCallback } from 'react';
 
 export function useVoiceSession(serverUrl) {
   const [isConnected, setIsConnected] = useState(false);
@@ -6,6 +6,10 @@ export function useVoiceSession(serverUrl) {
   const [usage, setUsage] = useState(null);
   const [cost, setCost] = useState(null);
   const [isAgentSpeaking, setIsAgentSpeaking] = useState(false);
+
+  // Pending frontend tool calls keyed by toolCallId — so the UI can present
+  // them and the user can submit a result back to the server.
+  const [pendingToolCalls, setPendingToolCalls] = useState({});
   
   const wsRef = useRef(null);
   const audioContextRef = useRef(null);
@@ -47,6 +51,7 @@ export function useVoiceSession(serverUrl) {
     try {
       // Clear previous states
       setTranscript([]);
+      setPendingToolCalls({});
       setUsage(null);
       setCost(null);
       
@@ -99,23 +104,27 @@ export function useVoiceSession(serverUrl) {
           const msg = JSON.parse(event.data);
           
           if (msg.event === 'transcript') {
+            const now = Date.now();
             setTranscript(prev => {
               const newTranscript = [...prev];
-              if (msg.data.isFinal) {
-                const last = newTranscript[newTranscript.length - 1];
-                if (last && !last.isFinal && last.speaker === msg.data.speaker) {
-                  newTranscript[newTranscript.length - 1] = { speaker: msg.data.speaker, text: msg.data.text, isFinal: true };
-                } else {
-                  newTranscript.push({ speaker: msg.data.speaker, text: msg.data.text, isFinal: true });
-                }
+              // Only consolidate into the last *text* message, never into a
+              // tool_call entry (which has type === 'tool_call' and no isFinal flag).
+              const last = newTranscript[newTranscript.length - 1];
+              const isConsolidatable = last && !last.type && !last.isFinal && last.speaker === msg.data.speaker;
+              if (isConsolidatable) {
+                newTranscript[newTranscript.length - 1] = {
+                  speaker: msg.data.speaker,
+                  text: msg.data.text,
+                  isFinal: msg.data.isFinal,
+                  timestamp: now
+                };
               } else {
-                // Update interim
-                const last = newTranscript[newTranscript.length - 1];
-                if (last && !last.isFinal && last.speaker === msg.data.speaker) {
-                  newTranscript[newTranscript.length - 1] = { speaker: msg.data.speaker, text: msg.data.text, isFinal: false };
-                } else {
-                  newTranscript.push({ speaker: msg.data.speaker, text: msg.data.text, isFinal: false });
-                }
+                newTranscript.push({
+                  speaker: msg.data.speaker,
+                  text: msg.data.text,
+                  isFinal: msg.data.isFinal,
+                  timestamp: now
+                });
               }
               return newTranscript;
             });
@@ -142,6 +151,58 @@ export function useVoiceSession(serverUrl) {
           }
           else if (msg.event === 'stop') {
             endSession();
+          }
+          else if (msg.event === 'tool_call_started') {
+            const now = Date.now();
+            setPendingToolCalls(prev => ({
+              ...prev,
+              [msg.toolCallId]: {
+                toolName: msg.toolName,
+                args: msg.args,
+                isFrontend: msg.isFrontend,
+                startTime: msg.timestamp || now
+              }
+            }));
+            setTranscript(prev => {
+              const existing = prev.findIndex(t => t.toolCallId === msg.toolCallId && t.type === 'tool_call');
+              const entry = {
+                type: 'tool_call',
+                speaker: 'agent',
+                toolName: msg.toolName,
+                args: msg.args,
+                toolCallId: msg.toolCallId,
+                timestamp: msg.timestamp || now,
+                startTime: msg.timestamp || now,
+                completed: false,
+                isFrontend: msg.isFrontend,
+                result: null
+              };
+              if (existing >= 0) {
+                const next = [...prev];
+                next[existing] = entry;
+                return next;
+              }
+              return [...prev, entry];
+            });
+          }
+          else if (msg.event === 'tool_call_completed') {
+            setTranscript(prev => prev.map(t => {
+              if (t.toolCallId === msg.toolCallId && t.type === 'tool_call') {
+                const serverDuration = msg.timestamp ? msg.timestamp - t.startTime : 0;
+                return {
+                  ...t,
+                  completed: true,
+                  result: msg.result,
+                  duration: serverDuration > 0 ? serverDuration : (Date.now() - t.startTime)
+                };
+              }
+              return t;
+            }));
+            setPendingToolCalls(prev => {
+              const next = { ...prev };
+              delete next[msg.toolCallId];
+              return next;
+            });
           }
         } catch (err) {
           console.error("Failed to parse websocket message", err);
@@ -198,6 +259,22 @@ export function useVoiceSession(serverUrl) {
     }
   }, []);
 
+  const completeToolCall = useCallback((toolCallId, result) => {
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({
+        type: 'tool.completed',
+        toolName: pendingToolCalls[toolCallId]?.toolName,
+        result,
+        toolCallId
+      }));
+    }
+    setPendingToolCalls(prev => {
+      const next = { ...prev };
+      delete next[toolCallId];
+      return next;
+    });
+  }, [pendingToolCalls]);
+
   return {
     isConnected,
     isAgentSpeaking,
@@ -206,6 +283,8 @@ export function useVoiceSession(serverUrl) {
     cost,
     startSession,
     endSession,
-    sendTextMessage
+    sendTextMessage,
+    pendingToolCalls,
+    completeToolCall
   };
 }
