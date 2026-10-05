@@ -6,8 +6,27 @@ const cors = require('cors');
 const cookieParser = require('cookie-parser');
 const { setupConnectionHandler } = require('./src/socket/connectionHandler');
 const { setupTelnyxConnectionHandler } = require('./src/socket/telnyxConnectionHandler');
+const { setupWhatsAppLiveHandler } = require('./src/socket/whatsappLiveSocket');
+const { setupBaileysSocketHandler } = require('./src/socket/baileysSocket');
+const { WhatsAppInboundRouter } = require('./src/services/WhatsAppInboundRouter');
 const app = express();
 app.use(cors({ origin: true, credentials: true }));
+
+// Capture raw body for Meta signature verification on the WhatsApp webhook
+app.use((req, res, next) => {
+  if (req.path.startsWith('/api/whatsapp/webhook')) {
+    let data = '';
+    req.setEncoding('utf8');
+    req.on('data', chunk => { data += chunk; });
+    req.on('end', () => {
+      req.rawBody = data;
+      try { req.body = data ? JSON.parse(data) : {}; } catch (e) { req.body = {}; }
+      next();
+    });
+  } else {
+    next();
+  }
+});
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
@@ -26,6 +45,17 @@ app.use('/api/crm', crmRouter);
 
 const authRouter = require('./src/routes/auth');
 app.use('/api/auth', authRouter);
+
+const whatsAppRouter = require('./src/routes/whatsapp');
+app.use('/api/whatsapp', whatsAppRouter);
+
+const baileysRouter = require('./src/routes/baileys');
+app.use('/api/baileys', baileysRouter);
+
+// WhatsApp webhooks. Mounted as :instanceId so a single server can serve
+// many businesses. The router handles both GET (handshake) and POST (events).
+app.all('/api/whatsapp/webhook', (req, res) => WhatsAppInboundRouter.handle(req, res));
+app.all('/api/whatsapp/webhook/:instanceId', (req, res) => WhatsAppInboundRouter.handle(req, res));
 
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', service: 'realtime-voice-service' });
@@ -59,15 +89,19 @@ const wss = new WebSocketServer({ server });
 
 wss.on('connection', (ws, req) => {
   console.log(`[Server] New WebSocket connection established on path: ${req.url}`);
-  
+
   // Parse URL to handle query parameters
   const urlParts = req.url.split('?');
   const pathname = urlParts[0];
   const queryParams = new URLSearchParams(urlParts[1] || '');
-  
+
   if (pathname === '/telnyx-media') {
     const to = queryParams.get('to');
     setupTelnyxConnectionHandler(ws, req, to);
+  } else if (pathname === '/baileys') {
+    setupBaileysSocketHandler(ws, req);
+  } else if (pathname === '/wa-live') {
+    setupWhatsAppLiveHandler(ws, req);
   } else {
     setupConnectionHandler(ws, req);
   }

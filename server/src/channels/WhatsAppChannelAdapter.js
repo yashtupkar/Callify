@@ -1,0 +1,106 @@
+/**
+ * WhatsAppChannelAdapter
+ *
+ * ChannelAdapter implementation for inbound/outbound WhatsApp messages.
+ * Voice-style methods (sendAudio, clearAudio) are no-ops; text/image/document
+ * methods hit the underlying WhatsAppProvider.
+ *
+ * Events emitted:
+ *   - 'user_message'  (text):  { from, text, providerMessageId, timestamp }
+ *   - 'user_media'    (media): { from, type, media, providerMessageId, timestamp, caption? }
+ *   - 'disconnected'           (lifecycle: end of session)
+ *   - 'error'                  (errors)
+ */
+
+const { ChannelAdapter } = require('./ChannelAdapter');
+
+class WhatsAppChannelAdapter extends ChannelAdapter {
+  /**
+   * @param {object} opts
+   * @param {import('../integrations/whatsapp/WhatsAppProvider')} opts.provider
+   * @param {string} opts.contactWaId        Sender's WhatsApp id (no '+')
+   * @param {string} opts.businessPhoneNumber  Our receiving number (E.164)
+   * @param {string} opts.instanceId
+   */
+  constructor({ provider, contactWaId, businessPhoneNumber, instanceId }) {
+    super();
+    this.provider = provider;
+    this.contactWaId = contactWaId;
+    this.businessPhoneNumber = businessPhoneNumber;
+    this.instanceId = instanceId;
+    this.contactProfileName = null;
+    this.ended = false;
+  }
+
+  // ---- ChannelAdapter surface (voice methods: no-ops) --------------------
+
+  sendAudio() {
+    // No TTS audio on WhatsApp; replies are text.
+  }
+
+  clearAudio() {
+    // No streaming audio buffer to clear.
+  }
+
+  sendControlMessage(msg) {
+    // Used by ConversationManager to emit transcript/tool events to the
+    // active live-chat socket (if any). The live socket wires itself to
+    // a per-session listener set up by WhatsAppInboundRouter.
+    if (typeof this._onControlMessage === 'function') {
+      try { this._onControlMessage(msg); } catch (e) { /* ignore */ }
+    }
+  }
+
+  endSession() {
+    if (this.ended) return;
+    this.ended = true;
+    this.emit('disconnected');
+  }
+
+  getSessionMetadata() {
+    return {
+      provider: `whatsapp_${this.provider.constructor.name === 'CloudApiProvider' ? 'cloud_api' : 'ultramsg'}`,
+      phoneNumber: this.businessPhoneNumber,
+      contactWaId: this.contactWaId,
+      instanceId: this.instanceId,
+    };
+  }
+
+  // ---- Live-socket wiring ------------------------------------------------
+
+  setControlMessageHandler(fn) {
+    this._onControlMessage = fn;
+  }
+
+  // ---- Outbound methods (called by ConversationManager) ------------------
+
+  async sendText(text) {
+    if (!text) return;
+    try {
+      await this.provider.sendText(this.contactWaId, text);
+    } catch (err) {
+      console.error('[WhatsAppChannelAdapter] sendText error:', err.message);
+      this.emit('error', err);
+    }
+  }
+
+  async sendImage(url, caption) {
+    try {
+      await this.provider.sendImage(this.contactWaId, url, caption);
+    } catch (err) {
+      console.error('[WhatsAppChannelAdapter] sendImage error:', err.message);
+      this.emit('error', err);
+    }
+  }
+
+  async sendDocument(url, filename) {
+    try {
+      await this.provider.sendDocument(this.contactWaId, url, filename);
+    } catch (err) {
+      console.error('[WhatsAppChannelAdapter] sendDocument error:', err.message);
+      this.emit('error', err);
+    }
+  }
+}
+
+module.exports = { WhatsAppChannelAdapter };

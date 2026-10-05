@@ -68,6 +68,11 @@ class ToolExecutor {
     // Guard: prevent save_collected_data from being executed more than once per call
     this._dataSaved      = false;
     this.agentId         = null;
+
+    // Channel-specific context (set by inbound router for WhatsApp etc.)
+    this.contactWaId     = null;
+    this.contactName     = null;
+    this.contactProvider = null;
     
     // Idempotency guards to prevent LLM loops
     this._bookingCreated = false;
@@ -109,7 +114,22 @@ class ToolExecutor {
     // -------------------------------------------------------------------------
     if (toolName === 'end_call') {
       console.log('[ToolExecutor] Queuing end of conversation after TTS finishes.');
-      
+
+      // Surface the agent's closing line to the transcript/UI so the user
+      // sees the goodbye message instead of the call ending silently.
+      if (preamble && preamble.trim()) {
+        this.transcript.push({
+          role: 'assistant',
+          content: preamble.trim(),
+          tool_calls: [{
+            id: llmToolCallId || ("call_" + Math.random().toString(36).substring(7)),
+            type: "function",
+            function: { name: 'end_call', arguments: '{}' }
+          }]
+        });
+        this.sendToClient({ event: 'transcript', data: { text: preamble.trim(), isFinal: true, speaker: 'agent' } });
+      }
+
       this.tts.flush(); // Flush the TTS stream so the goodbye message is spoken
       
       let ended = false;
@@ -214,6 +234,12 @@ class ToolExecutor {
           const email = (emailKey && args[emailKey]?.trim()) ? String(args[emailKey]).trim() : null;
           const phone = (phoneKey && args[phoneKey]?.trim()) ? String(args[phoneKey]).trim() : null;
 
+          // For WhatsApp sessions we already know the contact's phone (their
+          // wa_id). Backfill it if the LLM didn't include a phone field so
+          // downstream tools (send_whatsapp, create_booking) can work.
+          const effectivePhone = phone || (this.contactWaId ? String(this.contactWaId).replace(/[^\d]/g, '') : null);
+          const effectiveName = name || this.contactName || null;
+
           // Put everything else (non-empty) in metadata
           const metadata = {};
           for (const [k, v] of Object.entries(args)) {
@@ -223,9 +249,9 @@ class ToolExecutor {
 
           // Try to find an existing contact for this agent by phone number (returning callers)
           let contact;
-          if (phone) {
+          if (effectivePhone) {
             contact = await dbService.prisma.contact.findFirst({
-              where: { agentId: this.agentId, phone }
+              where: { agentId: this.agentId, phone: effectivePhone }
             });
           }
 
@@ -233,13 +259,13 @@ class ToolExecutor {
             // Returning caller — update their record and reuse their ID
             contact = await dbService.prisma.contact.update({
               where: { id: contact.id },
-              data: { name: name || contact.name, email: email || contact.email, metadata }
+              data: { name: effectiveName || contact.name, email: email || contact.email, metadata }
             });
             console.log('[ToolExecutor] Native CRM: Recognized returning caller, Contact ID', contact.id);
           } else {
             // New caller — create a fresh Contact record
             contact = await dbService.prisma.contact.create({
-              data: { agentId: this.agentId, name, email, phone, metadata }
+              data: { agentId: this.agentId, name: effectiveName, email, phone: effectivePhone, metadata }
             });
             console.log('[ToolExecutor] Native CRM: Created new Contact ID', contact.id);
           }

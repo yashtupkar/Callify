@@ -11,10 +11,11 @@ model Workspace {
   name         String
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt
-  
-  agents       Agent[]
-  phoneNumbers PhoneNumber[]
-  callSessions CallSession[]
+
+  agents            Agent[]
+  phoneNumbers      PhoneNumber[]
+  callSessions      CallSession[]
+  whatsAppInstances WhatsAppInstance[]
 }
 
 model Agent {
@@ -32,8 +33,12 @@ model Agent {
   tools                  Json?
   enableEmailConfirmation    Boolean       @default(false)
   enableWhatsAppConfirmation Boolean       @default(false)
+  whatsappEnabled          Boolean       @default(false)
+  automationPurpose        String?       // 'booking' | 'lead_capture' | 'support' | 'sales' | 'custom'
+  automationStatus         String        @default("draft") // 'draft' | 'active' | 'paused'
   allowedEmails              String[]      @default([])
   providers              Json?
+  flowConfig             Json?
   createdAt              DateTime      @default(now())
   updatedAt              DateTime      @updatedAt
   
@@ -46,15 +51,39 @@ model Agent {
 }
 
 model PhoneNumber {
-  id          String    @id @default(uuid())
-  workspaceId String?
-  phoneNumber String    @unique
-  agentId     String?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-  
-  workspace   Workspace? @relation(fields: [workspaceId], references: [id])
-  agent       Agent?     @relation(fields: [agentId], references: [id])
+  id                 String    @id @default(uuid())
+  workspaceId        String?
+  phoneNumber        String    @unique
+  agentId            String?
+  channel            String    @default("voice") // 'voice' | 'whatsapp'
+  whatsAppInstanceId String?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  workspace         Workspace?        @relation(fields: [workspaceId], references: [id])
+  agent             Agent?            @relation(fields: [agentId], references: [id])
+  whatsAppInstance  WhatsAppInstance? @relation(fields: [whatsAppInstanceId], references: [id])
+}
+
+model WhatsAppInstance {
+  id            String   @id @default(uuid())
+  workspaceId   String
+  provider      String   // 'ultramsg' | 'cloud_api'
+  phoneNumber   String   // E.164
+  phoneNumberId String?  // Meta Cloud API phone number id
+  instanceId    String?  // Ultramsg instance id
+  apiToken      String
+  verifyToken   String
+  businessId    String?  // Meta WABA id
+  appSecret     String?  // Meta app secret for X-Hub-Signature-256 verification
+  enabled       Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  workspace    Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  phoneNumbers PhoneNumber[]
+
+  @@unique([workspaceId, phoneNumber])
 }
 
 model CallSession {

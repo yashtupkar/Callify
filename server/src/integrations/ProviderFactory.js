@@ -3,6 +3,8 @@ const { STTService } = require('../integrations/stt/sttService');
 const { TTSProvider } = require('../integrations/tts/ttsProvider');
 const { FishAudioTTSProvider } = require('../integrations/tts/fishAudioTtsProvider');
 const { SarvamTTSProvider } = require('../integrations/tts/sarvamTtsProvider');
+const { UltramsgProvider } = require('./whatsapp/UltramsgProvider');
+const { CloudApiProvider } = require('./whatsapp/CloudApiProvider');
 
 const LLM_PROVIDERS = {
   openai: {
@@ -135,10 +137,41 @@ function createSTT(providerConfig, language = 'en-US') {
   return instance;
 }
 
+function createWhatsApp(providerConfig) {
+  const providerKey = (providerConfig?.provider || '').toLowerCase();
+  if (providerKey === 'ultramsg') {
+    return new UltramsgProvider({
+      instanceId: providerConfig.instanceId,
+      token: providerConfig.apiToken,
+      phoneNumber: providerConfig.phoneNumber,
+      verifyToken: providerConfig.verifyToken,
+    });
+  }
+  if (providerKey === 'cloud_api') {
+    return new CloudApiProvider({
+      phoneNumberId: providerConfig.phoneNumberId,
+      businessId: providerConfig.businessId,
+      apiToken: providerConfig.apiToken,
+      verifyToken: providerConfig.verifyToken,
+      appSecret: providerConfig.appSecret,
+    });
+  }
+  if (providerKey === 'baileys') {
+    // Lazy-require to avoid circular dependency (BaileysInstanceManager -> ConversationManager -> ProviderFactory)
+    const { baileysInstanceManager } = require('../services/BaileysInstanceManager');
+    const instanceId = providerConfig.instanceId;
+    const existing = baileysInstanceManager.getInstance(instanceId);
+    if (existing) return existing;
+    return baileysInstanceManager.createInstance(instanceId);
+  }
+  throw new Error(`[ProviderFactory] Unknown WhatsApp provider: "${providerKey}"`);
+}
+
 module.exports = {
   createLLM,
   createTTS,
   createSTT,
+  createWhatsApp,
   LLM_PROVIDERS,
   TTS_PROVIDERS,
   STT_PROVIDERS,

@@ -620,6 +620,54 @@ class ToolRegistry {
       fillerKey: 'get_pricing',
     });
   }
+
+  /**
+   * Inject the transcribe_media tool. Only used by WhatsApp (and any future
+   * async-text) channels. Voice channels never see it because they don't
+   * expose media before the LLM speaks.
+   *
+   * @param {Function} executor  async (args) => result where args = { mediaUrl?, providerMediaId?, mime, caption? }
+   */
+  injectTranscribeMediaTool(executor) {
+    this._builtIn.set('transcribe_media', {
+      schema: {
+        type: "function",
+        function: {
+          name: "transcribe_media",
+          description:
+            "Inspect media (image, audio, or document) sent by the user. " +
+            "Returns a textual description or transcript. " +
+            "Call this whenever the user sends an image, voice note, audio, or document " +
+            "instead of guessing what it contains.",
+          parameters: {
+            type: "object",
+            properties: {
+              providerMediaId: {
+                type: "string",
+                description: "The provider's media id (preferred). Pass this for Cloud API media."
+              },
+              mediaUrl: {
+                type: "string",
+                description: "Direct media URL (preferred for Ultramsg)."
+              },
+              mime: {
+                type: "string",
+                description: "MIME type, e.g. 'image/jpeg', 'audio/ogg', 'application/pdf'."
+              },
+              caption: {
+                type: "string",
+                description: "Caption the user wrote alongside the media, if any."
+              }
+            },
+            required: ["mime"],
+            additionalProperties: false,
+          }
+        }
+      },
+      fillerKey: 'generic',
+      executor,
+    });
+  }
 }
 
 module.exports = { ToolRegistry };

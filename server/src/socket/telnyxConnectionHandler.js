@@ -8,6 +8,10 @@ function setupTelnyxConnectionHandler(ws, req, to = null) {
   
   // We'll extract the streamSid from the 'start' event later
   const channelAdapter = new TelnyxChannelAdapter(ws);
+  let conversationManager = null;
+  let startPromise = null;
+  let ended = false;
+  const pendingAudio = [];
 
   ws.on('message', async (message) => {
     try {
@@ -54,19 +58,31 @@ function setupTelnyxConnectionHandler(ws, req, to = null) {
           }
         }
         
-        const conversationManager = new ConversationManager(channelAdapter, providerConfig);
-        await conversationManager.startConversation(config, 'telnyx');
+        conversationManager = new ConversationManager(channelAdapter, providerConfig);
+        startPromise = conversationManager.startConversation(config, 'telnyx');
+
+        await startPromise;
+
+        for (const audioBuffer of pendingAudio.splice(0)) {
+          if (!ended) conversationManager.handleIncomingAudio(audioBuffer);
+        }
+        if (ended) conversationManager.endConversation();
       } 
       else if (msg.event === 'media') {
         // Telnyx sends audio payload in base64
         if (msg.media && msg.media.payload) {
           const audioBuffer = Buffer.from(msg.media.payload, 'base64');
-          conversationManager.handleIncomingAudio(audioBuffer);
+          if (conversationManager && conversationManager.isCallActive) {
+            conversationManager.handleIncomingAudio(audioBuffer);
+          } else if (!ended) {
+            pendingAudio.push(audioBuffer);
+          }
         }
       } 
       else if (msg.event === 'stop') {
         console.log('[TelnyxConnectionHandler] Media stream stopped by Telnyx.');
-        conversationManager.endConversation();
+        ended = true;
+        if (conversationManager) conversationManager.endConversation();
       }
     } catch (err) {
       console.error('[TelnyxConnectionHandler] Error processing message:', err.message);
@@ -75,12 +91,14 @@ function setupTelnyxConnectionHandler(ws, req, to = null) {
 
   ws.on('close', () => {
     console.log('[TelnyxConnectionHandler] WebSocket closed.');
-    conversationManager.endConversation();
+    ended = true;
+    if (conversationManager) conversationManager.endConversation();
   });
 
   ws.on('error', (err) => {
     console.error('[TelnyxConnectionHandler] WebSocket error:', err);
-    conversationManager.endConversation();
+    ended = true;
+    if (conversationManager) conversationManager.endConversation();
   });
 }
 

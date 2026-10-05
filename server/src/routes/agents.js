@@ -64,13 +64,13 @@ router.get('/', authenticate, async (req, res) => {
 // POST /api/agents - Create a new agent (admin only)
 router.post('/', authenticate, requireRole('admin'), async (req, res) => {
   try {
-    const { name, systemPrompt, conversationGuidelines, initialMessage, voiceId, language, timezone, enableWhatsAppConfirmation, enableEmailConfirmation, tools, providers } = req.body;
-    
+    const { name, systemPrompt, conversationGuidelines, initialMessage, voiceId, language, timezone, enableWhatsAppConfirmation, enableEmailConfirmation, tools, providers, whatsappEnabled, automationPurpose, automationStatus } = req.body;
+
     // Quick patch: Find default workspace to prevent crashing since workspaceId is required
     const defaultWorkspace = await dbService.prisma.workspace.findFirst({
       where: { name: 'Default Workspace' }
     });
-    
+
     if (!defaultWorkspace) {
       return res.status(500).json({ error: 'No default workspace found. Run seed script.' });
     }
@@ -97,6 +97,9 @@ router.post('/', authenticate, requireRole('admin'), async (req, res) => {
         enableEmailConfirmation: enableEmailConfirmation || false,
         tools: parsedTools,
         providers: providers || null,
+        whatsappEnabled: !!whatsappEnabled,
+        automationPurpose: automationPurpose || null,
+        automationStatus: automationStatus || 'draft',
       }
     });
     res.status(201).json(newAgent);
@@ -110,8 +113,8 @@ router.post('/', authenticate, requireRole('admin'), async (req, res) => {
 router.put('/:id', authenticate, requireRole('admin'), async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, systemPrompt, conversationGuidelines, initialMessage, voiceId, language, timezone, enableWhatsAppConfirmation, enableEmailConfirmation, tools, providers } = req.body;
-    
+    const { name, systemPrompt, conversationGuidelines, initialMessage, voiceId, language, timezone, enableWhatsAppConfirmation, enableEmailConfirmation, tools, providers, whatsappEnabled, automationPurpose, automationStatus } = req.body;
+
     let parsedTools = null;
     if (typeof tools === 'string') {
       try { parsedTools = JSON.parse(tools); } catch(e) {}
@@ -130,6 +133,9 @@ router.put('/:id', authenticate, requireRole('admin'), async (req, res) => {
       ...(enableWhatsAppConfirmation !== undefined && { enableWhatsAppConfirmation }),
       ...(enableEmailConfirmation !== undefined && { enableEmailConfirmation }),
       ...(tools !== undefined && { tools: parsedTools }),
+      ...(whatsappEnabled !== undefined && { whatsappEnabled: !!whatsappEnabled }),
+      ...(automationPurpose !== undefined && { automationPurpose }),
+      ...(automationStatus !== undefined && { automationStatus }),
       ...(Array.isArray(req.body.allowedEmails) && { allowedEmails: req.body.allowedEmails.map(e => String(e).trim().toLowerCase()).filter(Boolean) }),
     };
 

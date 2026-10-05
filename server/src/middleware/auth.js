@@ -64,6 +64,8 @@ module.exports = {
   setAuthCookie,
   clearAuthCookie,
   authenticate,
+  authMiddleware: authenticate,
   requireRole,
+  requireAdmin: requireRole('admin'),
   JWT_SECRET,
 };

@@ -354,7 +354,7 @@ class ConversationManager extends EventEmitter {
     }
   }
 
-  handleUserUtterance(text) {
+  async handleUserUtterance(text) {
     if (!this.isCallActive) return;
 
     if (this.stateManager && this.stateManager.phase === 'GREETING') {
@@ -366,7 +366,7 @@ class ConversationManager extends EventEmitter {
       const lastMsg = this.transcript[this.transcript.length - 1];
       if (lastMsg.role === 'user') {
         lastMsg.content += " " + text;
-        this.llm.generateResponse(
+        return this.llm.generateResponse(
           this.getRecentTranscript(), 
           this.getAllTools(), 
           'auto',
@@ -376,7 +376,7 @@ class ConversationManager extends EventEmitter {
       }
     }
     this.transcript.push({ role: 'user', content: text });
-    this.llm.generateResponse(
+    return this.llm.generateResponse(
       this.getRecentTranscript(), 
       this.getAllTools(), 
       'auto',

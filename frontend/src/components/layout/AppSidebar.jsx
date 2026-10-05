@@ -13,6 +13,7 @@ import {
   Search,
   BarChart3,
   LogOut,
+  MessageCircle,
 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
@@ -50,6 +51,9 @@ function AdminNav() {
       items: [
         { to: '/agents', icon: Bot, label: 'Agent Studio', end: true },
         { to: '/crm/agents', icon: Settings2, label: 'Agent settings' },
+        { to: '/admin/whatsapp-automations', icon: MessageCircle, label: 'WhatsApp Agents' },
+        { to: '/admin/whatsapp-numbers', icon: Phone, label: 'WhatsApp Numbers' },
+        { to: '/admin/whatsapp-live', icon: MessageCircle, label: 'Live Chat' },
       ],
     },
   ];
