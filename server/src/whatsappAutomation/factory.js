@@ -5,7 +5,6 @@ const { handleMessages } = require('./runtime');
 const { baileysInstanceManager } = require('../services/BaileysInstanceManager');
 
 const activeBaileys = new Map();
-const standaloneListeners = new Map();
 
 function createWhatsAppAutomationProvider(connection) {
   const provider = String(connection.provider || '').toLowerCase();
@@ -23,9 +22,7 @@ function createWhatsAppAutomationProvider(connection) {
     const existing = connection.instanceId && baileysInstanceManager.getInstance(connection.instanceId);
     if (existing) {
       const instanceId = connection.instanceId;
-      baileysInstanceManager.registerStandaloneInstance(instanceId);
-      const listener = async ({ instanceId: incomingInstanceId, message }) => {
-        if (incomingInstanceId !== instanceId) return;
+      const handler = async (message) => {
         const current = await dbService.prisma.whatsAppConnection.findUnique({
           where: { id: connection.id },
           include: { automation: { include: { tools: true } } },
@@ -41,8 +38,7 @@ function createWhatsAppAutomationProvider(connection) {
           console.warn(`[WhatsAppAutomation] Ignoring message for paused or disabled connection ${connection.id}`);
         }
       };
-      standaloneListeners.set(connection.id, { instanceId, listener });
-      baileysInstanceManager.on('message', listener);
+      baileysInstanceManager.registerStandaloneInstance(instanceId, handler);
       activeBaileys.set(connection.id, existing);
       return existing;
     }

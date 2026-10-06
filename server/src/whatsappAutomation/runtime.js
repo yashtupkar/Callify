@@ -1,4 +1,4 @@
-const { ConversationManager } = require('../services/ConversationManager');
+const { WhatsAppConversationManager } = require('./conversationManager');
 const { ToolRegistry } = require('../tools/ToolRegistry');
 const { WhatsAppAutomationChannelAdapter } = require('./channelAdapter');
 const { buildWhatsAppPrompt } = require('./promptBuilder');
@@ -11,7 +11,7 @@ async function getOrCreateSession({ automation, connection, contactWaId, contact
     provider, contactWaId, contactJid, businessPhoneNumber: connection.phoneNumber, instanceId: connection.id,
   });
   adapter.contactProfileName = profileName || null;
-  const manager = new ConversationManager(adapter, automation.providers || null, { textOnly: true });
+  const manager = new WhatsAppConversationManager(adapter, automation.providers || null);
   const registry = new ToolRegistry();
   for (const tool of automation.tools || []) {
     if (tool.enabled && tool.name && tool.schema) registry.registerCustom(tool.name, tool.schema);
@@ -19,8 +19,16 @@ async function getOrCreateSession({ automation, connection, contactWaId, contact
   manager.registry = registry;
   manager.toolExecutor.registry = registry;
   const config = {
-    systemPrompt: buildWhatsAppPrompt(automation, { language: automation.language }),
-    firstMessage: automation.initialMessage,
+    systemPrompt: buildWhatsAppPrompt(automation, {
+      language: automation.language,
+      timezone: automation.timezone,
+      toolNames: registry.getAllSchemas()
+        .map(tool => tool.function?.name)
+        .filter(Boolean),
+    }),
+    firstMessage: typeof automation.initialMessage === 'string'
+      ? automation.initialMessage.trim()
+      : '',
     assistantName: automation.businessName || automation.name,
     language: automation.language || 'en-US',
     timezone: automation.timezone,
@@ -31,24 +39,34 @@ async function getOrCreateSession({ automation, connection, contactWaId, contact
   manager.toolExecutor.contactWaId = contactWaId;
   manager.toolExecutor.contactName = adapter.contactProfileName;
   manager.toolExecutor.contactProvider = connection.provider;
-  await manager.startConversation(config, 'whatsapp');
+  await manager.start(config);
   entry = { conversationManager: manager, adapter, contactWaId };
   await store.set(connection, automation, contactWaId, entry);
   return entry;
 }
 
 async function handleMessages({ automation, connection, provider, messages }) {
+  const initialMessage = typeof automation.initialMessage === 'string'
+    ? automation.initialMessage.trim()
+    : '';
   const grouped = new Map();
   for (const message of messages || []) {
     if (message.from) grouped.set(message.from, [...(grouped.get(message.from) || []), message]);
   }
   for (const [contactWaId, contactMessages] of grouped) {
+    const isNewSession = !store.get(connection.id, contactWaId);
     const entry = await getOrCreateSession({
       automation, connection, contactWaId, provider,
       contactJid: contactMessages[0].jid,
       profileName: contactMessages[0].profileName,
     });
-    for (const message of contactMessages) {
+    for (const [index, message] of contactMessages.entries()) {
+      if (isNewSession && index === 0 && initialMessage) {
+        const text = message.text || `[User sent a ${message.type || 'message'}]`;
+        entry.conversationManager.transcript.push({ role: 'user', content: text });
+        await store.set(connection, automation, contactWaId, entry);
+        continue;
+      }
       if (message.type === 'text' || message.type === 'button' || message.type === 'list') {
         const text = (message.text || '').trim();
         if (text) await entry.conversationManager.handleUserUtterance(text);

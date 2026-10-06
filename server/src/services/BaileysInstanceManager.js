@@ -7,9 +7,11 @@
  */
 
 const { BaileysProvider } = require('../integrations/whatsapp/baileysProvider');
-const { ConversationManager } = require('./ConversationManager');
-const { store } = require('./WhatsAppSessionStore');
+const { WhatsAppConversationManager } = require('../whatsappAutomation/conversationManager');
+const { buildWhatsAppPrompt } = require('../whatsappAutomation/promptBuilder');
+const { store } = require('../whatsappAutomation/sessionStore');
 const { loadAgentRuntime } = require('../modules/agent/agentRuntime');
+const { dbService } = require('./DatabaseService');
 const EventEmitter = require('events');
 const fs = require('fs');
 const path = require('path');
@@ -34,16 +36,6 @@ class BaileysChannelAdapter extends EventEmitter {
   // ConversationManager emits all events through sendControlMessage.
   // The LLM's final agent reply comes as: { event: 'transcript', data: { text, speaker: 'agent', isFinal: true } }
   sendControlMessage(msg) {
-    if (msg?.event === 'transcript' && msg?.data?.speaker === 'agent' && msg?.data?.isFinal === true) {
-      const text = (msg.data.text || '').trim();
-      if (!text) return;
-
-      console.log(`[BaileysChannelAdapter] Sending reply to ${this.jid}: "${text.slice(0, 80)}"`);
-      this.provider.sendText(this.jid, text).catch(err => {
-        console.error('[BaileysChannelAdapter] Failed to send WhatsApp reply:', err.message);
-      });
-    }
-
     // Forward all events to any live-socket listener
     if (typeof this._onControlMessage === 'function') {
       try { this._onControlMessage(msg); } catch (e) { /* ignore */ }
@@ -63,6 +55,10 @@ class BaileysChannelAdapter extends EventEmitter {
   setControlMessageHandler(fn) {
     this._onControlMessage = fn;
   }
+
+  async sendText(text) {
+    if (text) await this.provider.sendText(this.jid, text);
+  }
 }
 
 
@@ -73,6 +69,7 @@ class BaileysInstanceManager extends EventEmitter {
     this.authPath = process.env.BAILEYS_AUTH_FOLDER || './baileys_auth';
     this.agentMapping = new Map(); // instanceId -> agentId
     this.standaloneInstances = new Set();
+    this.standaloneHandlers = new Map();
     this.persistenceFile = path.join(this.authPath, 'instances.json');
     this.loadPersistedInstances();
   }
@@ -254,12 +251,14 @@ class BaileysInstanceManager extends EventEmitter {
     this.emit('connectionUpdate', { instanceId, ...update });
   }
 
-  registerStandaloneInstance(instanceId) {
+  registerStandaloneInstance(instanceId, handler) {
     this.standaloneInstances.add(instanceId);
+    if (handler) this.standaloneHandlers.set(instanceId, handler);
   }
 
   unregisterStandaloneInstance(instanceId) {
     this.standaloneInstances.delete(instanceId);
+    this.standaloneHandlers.delete(instanceId);
   }
 
   /**
@@ -267,7 +266,42 @@ class BaileysInstanceManager extends EventEmitter {
    */
   async handleMessage(instanceId, message) {
     console.log(`[BaileysInstanceManager] Message received for ${instanceId} from ${message.from}`);
+    const standaloneHandler = this.standaloneHandlers.get(instanceId);
+    if (standaloneHandler) {
+      await standaloneHandler(message);
+      return;
+    }
     this.emit('message', { instanceId, message });
+
+    // 1. Check if there is an active WhatsAppAutomation connection in the database
+    try {
+      const connection = await dbService.prisma.whatsAppConnection.findFirst({
+        where: {
+          OR: [
+            { instanceId },
+            { id: instanceId },
+          ],
+          enabled: true,
+        },
+        include: { automation: { include: { tools: true } } },
+      });
+
+      if (connection && connection.automation && connection.automation.status !== 'paused') {
+        const provider = this.instances.get(instanceId);
+        if (provider) {
+          const { handleMessages } = require('../whatsappAutomation/runtime');
+          await handleMessages({
+            automation: connection.automation,
+            connection,
+            provider,
+            messages: [message],
+          });
+          return;
+        }
+      }
+    } catch (err) {
+      console.error('[BaileysInstanceManager] Error checking WhatsAppConnection:', err);
+    }
 
     if (this.standaloneInstances.has(instanceId)) return;
 
@@ -280,6 +314,20 @@ class BaileysInstanceManager extends EventEmitter {
 
     // Get associated agent — try explicit mapping first
     let agentId = this.agentMapping.get(instanceId) || null;
+    if (!agentId) {
+      try {
+        const phone = await dbService.prisma.phoneNumber.findFirst({
+          where: {
+            OR: [
+              { whatsAppInstanceId: instanceId },
+              { phoneNumber: message.from },
+            ],
+            agentId: { not: null },
+          },
+        });
+        if (phone?.agentId) agentId = phone.agentId;
+      } catch (e) {}
+    }
 
     // Route through ConversationManager (text-only, no STT/TTS)
     try {
@@ -288,7 +336,7 @@ class BaileysInstanceManager extends EventEmitter {
         provider,
         contactWaId: message.from,
         message,
-        agentId
+        agentId,
       });
     } catch (err) {
       console.error('[BaileysInstanceManager] Error routing message:', err);
@@ -301,6 +349,8 @@ class BaileysInstanceManager extends EventEmitter {
   async _routeMessageToChatbot({ instanceId, provider, contactWaId, message, agentId }) {
     let entry = store.get(instanceId, contactWaId);
     let conversationManager = entry?.conversationManager;
+    const isNewSession = !entry;
+    let firstMessage = '';
 
     if (!conversationManager) {
       const adapter = new BaileysChannelAdapter({ provider, contactWaId, jid: message.jid });
@@ -309,21 +359,40 @@ class BaileysInstanceManager extends EventEmitter {
         language: 'en-US',
         channel: 'whatsapp',
         contactWaId,
-        skipGreeting: true,
       };
+
+      if (!agentId) {
+        try {
+          const fallbackAgent = await dbService.prisma.agent.findFirst({
+            where: { whatsappEnabled: true },
+            orderBy: { updatedAt: 'desc' },
+          }) || await dbService.prisma.agent.findFirst({
+            orderBy: { updatedAt: 'desc' },
+          });
+          if (fallbackAgent) agentId = fallbackAgent.id;
+        } catch (e) {}
+      }
 
       if (agentId) {
         try {
           const { agent, registry, systemPrompt } = await loadAgentRuntime(agentId);
-          conversationManager = new ConversationManager(adapter, agent.providers || null);
-          // loadAgentRuntime builds the agent's complete tool registry. Reuse it
-          // so WhatsApp turns have the same tools as browser conversations.
+          conversationManager = new WhatsAppConversationManager(adapter, agent.providers || null);
           conversationManager.registry = registry;
           conversationManager.toolExecutor.registry = registry;
           config = {
             ...config,
             ...agent,
-            systemPrompt,
+            systemPrompt: buildWhatsAppPrompt({
+              ...agent,
+              systemPrompt: agent.systemPrompt || systemPrompt,
+            }, {
+              language: agent.language || 'en-US',
+              timezone: agent.timezone,
+              conversationGuidelines: agent.conversationGuidelines,
+              toolNames: registry.getAllSchemas()
+                .map(tool => tool.function?.name)
+                .filter(Boolean),
+            }),
             firstMessage: agent.initialMessage,
             language: agent.language || 'hi-IN',
             assistantName: agent.name,
@@ -333,24 +402,34 @@ class BaileysInstanceManager extends EventEmitter {
             agentId: agent.id,
             workspaceId: agent.workspaceId,
           };
+          firstMessage = typeof agent.initialMessage === 'string' ? agent.initialMessage.trim() : '';
         } catch (err) {
           console.error(`[BaileysInstanceManager] Failed to load agent ${agentId}:`, err);
-          conversationManager = new ConversationManager(adapter, null);
+          conversationManager = new WhatsAppConversationManager(adapter);
+          config.systemPrompt = buildWhatsAppPrompt({});
         }
       } else {
-        conversationManager = new ConversationManager(adapter, null);
+        conversationManager = new WhatsAppConversationManager(adapter);
+        config.systemPrompt = buildWhatsAppPrompt({});
       }
 
       conversationManager.toolExecutor.contactWaId = contactWaId;
       conversationManager.toolExecutor.contactProvider = 'baileys';
 
-      await conversationManager.startConversation(config, 'whatsapp');
+      await conversationManager.start(config);
 
-      store.set(instanceId, contactWaId, { conversationManager, adapter, agentId, contactWaId });
-      console.log(`[BaileysInstanceManager] Started ConversationManager for ${instanceId}:${contactWaId}`);
+      store.set({ id: instanceId }, { id: agentId || instanceId }, contactWaId, { conversationManager, adapter, agentId, contactWaId });
+      console.log(`[BaileysInstanceManager] Started WhatsAppConversationManager for ${instanceId}:${contactWaId}`);
     } else {
       store.touch(instanceId, contactWaId);
       conversationManager = entry.conversationManager;
+    }
+
+    // The configured welcome message is the response to the first inbound
+    // message. Record that message without generating a second reply.
+    if (isNewSession && firstMessage && message.type === 'text') {
+      conversationManager.transcript.push({ role: 'user', content: (message.text || '').trim() });
+      return;
     }
 
     // Route by message type

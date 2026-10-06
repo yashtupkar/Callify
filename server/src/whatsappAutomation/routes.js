@@ -87,6 +87,7 @@ router.put('/:automationId', requireAdmin, async (req, res) => {
       data: { name, description, language, supportedLanguages, systemPrompt, initialMessage, businessName, timezone, status, promptConfig },
     });
     if (!automation.count) return res.status(404).json({ error: 'Automation not found' });
+    store.clearAutomation(req.params.automationId);
     res.json({ ok: true });
   } catch (error) {
     console.error('[WhatsAppAutomation] update error:', error);

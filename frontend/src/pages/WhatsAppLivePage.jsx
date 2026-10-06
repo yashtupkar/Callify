@@ -34,7 +34,7 @@ export default function WhatsAppLivePage() {
   const refreshSessions = async () => {
     setLoadingSessions(true);
     try {
-      const r = await axios.get(`${SERVER_URL}/api/whatsapp/sessions`);
+      const r = await axios.get(`${SERVER_URL}/api/whatsapp-automation/sessions`);
       setSessions(r.data.sessions || []);
     } catch (e) {
       console.error(e);
@@ -45,9 +45,9 @@ export default function WhatsAppLivePage() {
 
   const refreshInstances = async () => {
     try {
-      const r = await axios.get(`${SERVER_URL}/api/whatsapp/instances`);
-      setInstances(r.data.instances || []);
-      if (!testInstance && r.data.instances?.[0]) setTestInstance(r.data.instances[0].id);
+      const r = await axios.get(`${SERVER_URL}/api/baileys/instances`);
+      setInstances(r.data || []);
+      if (!testInstance && r.data?.[0]) setTestInstance(r.data[0].instanceId);
     } catch (e) {
       console.error(e);
     }
@@ -68,27 +68,6 @@ export default function WhatsAppLivePage() {
       wsRef.current = null;
     }
     if (!selectedKey) return;
-    const url = `${WS_URL}/wa-live?key=${encodeURIComponent(selectedKey)}`;
-    const ws = new WebSocket(url);
-    wsRef.current = ws;
-    ws.onmessage = (ev) => {
-      try {
-        const data = JSON.parse(ev.data);
-        if (data.type === 'event' && data.event?.event === 'transcript') {
-          const t = data.event.data;
-          setTranscript((prev) => [...prev, { role: t.speaker === 'user' ? 'user' : 'assistant', text: t.text, isFinal: t.isFinal }]);
-        } else if (data.event?.event === 'tool_call_started') {
-          setTranscript((prev) => [...prev, { role: 'tool', tool: data.event.toolName, args: data.event.args, status: 'started' }]);
-        } else if (data.event?.event === 'tool_call_completed') {
-          setTranscript((prev) => [...prev, { role: 'tool', tool: data.event.toolName, result: data.event.result, status: 'done' }]);
-        } else if (data.event?.event === 'start') {
-          setTranscript((prev) => [...prev, { role: 'system', text: 'Conversation started' }]);
-        } else if (data.event?.event === 'stop') {
-          setTranscript((prev) => [...prev, { role: 'system', text: 'Conversation ended' }]);
-        }
-      } catch (e) { /* ignore */ }
-    };
-    return () => { try { ws.close(); } catch (e) {} };
   }, [selectedKey, isAdmin]);
 
   // Auto-scroll
@@ -100,8 +79,9 @@ export default function WhatsAppLivePage() {
     if (!testInstance || !testTo) return;
     setTestStatus('sending');
     try {
-      const r = await axios.post(`${SERVER_URL}/api/whatsapp/instances/${testInstance}/test-send`, {
+      const r = await axios.post(`${SERVER_URL}/api/baileys/instance/${testInstance}/send`, {
         to: testTo,
+        type: 'text',
         body: testBody,
       });
       setTestStatus({ ok: true, data: r.data });

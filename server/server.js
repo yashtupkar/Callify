@@ -6,16 +6,14 @@ const cors = require('cors');
 const cookieParser = require('cookie-parser');
 const { setupConnectionHandler } = require('./src/socket/connectionHandler');
 const { setupTelnyxConnectionHandler } = require('./src/socket/telnyxConnectionHandler');
-const { setupWhatsAppLiveHandler } = require('./src/socket/whatsappLiveSocket');
 const { setupBaileysSocketHandler } = require('./src/socket/baileysSocket');
-const { WhatsAppInboundRouter } = require('./src/services/WhatsAppInboundRouter');
 const { routes: whatsappAutomationRouter, WhatsAppAutomationInboundRouter, initializeWhatsAppAutomationProviders } = require('./src/whatsappAutomation');
 const app = express();
 app.use(cors({ origin: true, credentials: true }));
 
 // Capture raw body for Meta signature verification on the WhatsApp webhook
 app.use((req, res, next) => {
-  if (req.path.startsWith('/api/whatsapp/webhook') || req.path.startsWith('/api/whatsapp-automation/webhook')) {
+  if (req.path.startsWith('/api/whatsapp-automation/webhook')) {
     let data = '';
     req.setEncoding('utf8');
     req.on('data', chunk => { data += chunk; });
@@ -47,17 +45,12 @@ app.use('/api/crm', crmRouter);
 const authRouter = require('./src/routes/auth');
 app.use('/api/auth', authRouter);
 
-const whatsAppRouter = require('./src/routes/whatsapp');
-app.use('/api/whatsapp', whatsAppRouter);
 app.use('/api/whatsapp-automation', whatsappAutomationRouter);
 
 const baileysRouter = require('./src/routes/baileys');
 app.use('/api/baileys', baileysRouter);
 
-// WhatsApp webhooks. Mounted as :instanceId so a single server can serve
-// many businesses. The router handles both GET (handshake) and POST (events).
-app.all('/api/whatsapp/webhook', (req, res) => WhatsAppInboundRouter.handle(req, res));
-app.all('/api/whatsapp/webhook/:instanceId', (req, res) => WhatsAppInboundRouter.handle(req, res));
+// WhatsApp automation webhooks
 app.all('/api/whatsapp-automation/webhook/:connectionId', (req, res) => WhatsAppAutomationInboundRouter.handle(req, res));
 
 app.get('/health', (req, res) => {
@@ -103,8 +96,6 @@ wss.on('connection', (ws, req) => {
     setupTelnyxConnectionHandler(ws, req, to);
   } else if (pathname === '/baileys') {
     setupBaileysSocketHandler(ws, req);
-  } else if (pathname === '/wa-live') {
-    setupWhatsAppLiveHandler(ws, req);
   } else {
     setupConnectionHandler(ws, req);
   }

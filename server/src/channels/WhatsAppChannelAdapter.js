@@ -59,8 +59,14 @@ class WhatsAppChannelAdapter extends ChannelAdapter {
   }
 
   getSessionMetadata() {
+    const providerName = this.provider?.constructor?.name;
+    const providerType = providerName === 'CloudApiProvider'
+      ? 'cloud_api'
+      : providerName === 'BaileysProvider'
+        ? 'baileys'
+        : 'whatsapp';
     return {
-      provider: `whatsapp_${this.provider.constructor.name === 'CloudApiProvider' ? 'cloud_api' : 'ultramsg'}`,
+      provider: `whatsapp_${providerType}`,
       phoneNumber: this.businessPhoneNumber,
       contactWaId: this.contactWaId,
       instanceId: this.instanceId,

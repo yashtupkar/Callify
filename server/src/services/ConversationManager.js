@@ -255,7 +255,9 @@ class ConversationManager extends EventEmitter {
 
     // Build the dynamic prompt for the agent
     // No more DB fetching for bookings/availability — prompt is purely static
-    const fullPrompt = buildAgentPrompt({ agent: config, timezone: config.timezone });
+    const fullPrompt = this.textOnly && config.systemPrompt
+      ? config.systemPrompt
+      : buildAgentPrompt({ agent: config, timezone: config.timezone });
 
     // Inject the built-in data collection tool via registry if needed
     if (config.dataToCollect && config.dataToCollect.length > 0) {
@@ -272,10 +274,14 @@ class ConversationManager extends EventEmitter {
 
     // Kick off the conversation with an instant greeting
     const assistantName = config.assistantName || DEFAULT_ASSISTANT_NAME;
-    const greeting = config.firstMessage || `Hi, thanks for calling! This is ${assistantName}, you've reached our reception desk. How can I help you today?`;
+    const greeting = config.firstMessage || (this.textOnly
+      ? ''
+      : `Hi, thanks for calling! This is ${assistantName}, you've reached our reception desk. How can I help you today?`);
     if (this.textOnly) {
-      this.transcript.push({ role: 'assistant', content: greeting });
-      await this.channel.sendText(greeting);
+      if (greeting) {
+        this.transcript.push({ role: 'assistant', content: greeting });
+        await this.channel.sendText(greeting);
+      }
       return;
     }
 

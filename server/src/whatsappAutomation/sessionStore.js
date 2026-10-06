@@ -28,6 +28,11 @@ class WhatsAppAutomationSessionStore {
     if (value) value.lastActivityAt = Date.now();
     return value;
   }
+  clearAutomation(automationId) {
+    for (const [key, value] of this.sessions) {
+      if (value.automationId === automationId) this.sessions.delete(key);
+    }
+  }
   list() { return [...this.sessions.entries()].map(([key, value]) => ({ key, ...value })); }
 }
 

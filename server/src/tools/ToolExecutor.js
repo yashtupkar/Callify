@@ -1,7 +1,6 @@
 const { executeWebhookTool } = require('./WebhookToolExecutor');
 const { dbService } = require('../services/DatabaseService');
 const { EmailService } = require('../services/EmailService');
-const { WhatsAppService } = require('../services/WhatsAppService');
 
 // Converts an hour/minute integer into a spoken word TTS can read cleanly.
 function _numToWord(n) {

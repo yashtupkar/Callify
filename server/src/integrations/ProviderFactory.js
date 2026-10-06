@@ -3,7 +3,6 @@ const { STTService } = require('../integrations/stt/sttService');
 const { TTSProvider } = require('../integrations/tts/ttsProvider');
 const { FishAudioTTSProvider } = require('../integrations/tts/fishAudioTtsProvider');
 const { SarvamTTSProvider } = require('../integrations/tts/sarvamTtsProvider');
-const { UltramsgProvider } = require('./whatsapp/UltramsgProvider');
 const { CloudApiProvider } = require('./whatsapp/CloudApiProvider');
 
 const LLM_PROVIDERS = {
@@ -139,15 +138,7 @@ function createSTT(providerConfig, language = 'en-US') {
 
 function createWhatsApp(providerConfig) {
   const providerKey = (providerConfig?.provider || '').toLowerCase();
-  if (providerKey === 'ultramsg') {
-    return new UltramsgProvider({
-      instanceId: providerConfig.instanceId,
-      token: providerConfig.apiToken,
-      phoneNumber: providerConfig.phoneNumber,
-      verifyToken: providerConfig.verifyToken,
-    });
-  }
-  if (providerKey === 'cloud_api') {
+  if (providerKey === 'cloud_api' || providerKey === 'meta_cloud' || providerKey === 'meta') {
     return new CloudApiProvider({
       phoneNumberId: providerConfig.phoneNumberId,
       businessId: providerConfig.businessId,
