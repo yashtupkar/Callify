@@ -113,7 +113,7 @@ class ToolExecutor {
     // SYSTEM: end_call
     // -------------------------------------------------------------------------
     if (toolName === 'end_call') {
-      console.log('[ToolExecutor] Queuing end of conversation after TTS finishes.');
+      console.log(`[ToolExecutor] Ending ${this.tts ? 'after TTS finishes' : 'text conversation'}.`);
 
       // Surface the agent's closing line to the transcript/UI so the user
       // sees the goodbye message instead of the call ending silently.
@@ -130,6 +130,10 @@ class ToolExecutor {
         this.sendToClient({ event: 'transcript', data: { text: preamble.trim(), isFinal: true, speaker: 'agent' } });
       }
 
+      if (!this.tts) {
+        this.endConversation();
+        return;
+      }
       this.tts.flush(); // Flush the TTS stream so the goodbye message is spoken
       
       let ended = false;
@@ -166,7 +170,7 @@ class ToolExecutor {
         stateManager.markFieldCollected(args.field, args.value);
       }
       
-      this.tts.flush(); // Flush the TTS stream since the text was streamed
+      if (this.tts) this.tts.flush(); // Flush the TTS stream since the text was streamed
       
       const toolCallId = this._appendToolCall(toolName, args, preamble, llmToolCallId);
       this._appendToolResult(toolName, toolCallId, { success: true });
@@ -869,6 +873,7 @@ class ToolExecutor {
 
   /** Play a filler phrase over TTS to mask latency. */
   _playFiller(toolName, preamble) {
+    if (!this.tts) return;
     const now = Date.now();
     if (now - this._lastFillerAt < this.FILLER_DEBOUNCE_MS) {
       // Another filler (or the model's own preamble) was just spoken —

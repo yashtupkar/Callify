@@ -9,12 +9,13 @@ const { setupTelnyxConnectionHandler } = require('./src/socket/telnyxConnectionH
 const { setupWhatsAppLiveHandler } = require('./src/socket/whatsappLiveSocket');
 const { setupBaileysSocketHandler } = require('./src/socket/baileysSocket');
 const { WhatsAppInboundRouter } = require('./src/services/WhatsAppInboundRouter');
+const { routes: whatsappAutomationRouter, WhatsAppAutomationInboundRouter, initializeWhatsAppAutomationProviders } = require('./src/whatsappAutomation');
 const app = express();
 app.use(cors({ origin: true, credentials: true }));
 
 // Capture raw body for Meta signature verification on the WhatsApp webhook
 app.use((req, res, next) => {
-  if (req.path.startsWith('/api/whatsapp/webhook')) {
+  if (req.path.startsWith('/api/whatsapp/webhook') || req.path.startsWith('/api/whatsapp-automation/webhook')) {
     let data = '';
     req.setEncoding('utf8');
     req.on('data', chunk => { data += chunk; });
@@ -48,6 +49,7 @@ app.use('/api/auth', authRouter);
 
 const whatsAppRouter = require('./src/routes/whatsapp');
 app.use('/api/whatsapp', whatsAppRouter);
+app.use('/api/whatsapp-automation', whatsappAutomationRouter);
 
 const baileysRouter = require('./src/routes/baileys');
 app.use('/api/baileys', baileysRouter);
@@ -56,6 +58,7 @@ app.use('/api/baileys', baileysRouter);
 // many businesses. The router handles both GET (handshake) and POST (events).
 app.all('/api/whatsapp/webhook', (req, res) => WhatsAppInboundRouter.handle(req, res));
 app.all('/api/whatsapp/webhook/:instanceId', (req, res) => WhatsAppInboundRouter.handle(req, res));
+app.all('/api/whatsapp-automation/webhook/:connectionId', (req, res) => WhatsAppAutomationInboundRouter.handle(req, res));
 
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', service: 'realtime-voice-service' });
@@ -111,4 +114,7 @@ const PORT = process.env.VOICE_PORT || 8083;
 server.listen(PORT, () => {
   console.log(`Realtime Voice Service running on http://localhost:${PORT}`);
   console.log(`WebSocket server listening on ws://localhost:${PORT}`);
+  initializeWhatsAppAutomationProviders().catch(error => {
+    console.error('[WhatsAppAutomation] Startup initialization failed:', error);
+  });
 });

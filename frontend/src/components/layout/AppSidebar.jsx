@@ -51,8 +51,8 @@ function AdminNav() {
       items: [
         { to: '/agents', icon: Bot, label: 'Agent Studio', end: true },
         { to: '/crm/agents', icon: Settings2, label: 'Agent settings' },
-        { to: '/admin/whatsapp-automations', icon: MessageCircle, label: 'WhatsApp Agents' },
-        { to: '/admin/whatsapp-numbers', icon: Phone, label: 'WhatsApp Numbers' },
+        { to: '/admin/whatsapp-automations', icon: MessageCircle, label: 'WhatsApp Automation' },
+        { to: '/admin/whatsapp-numbers', icon: Phone, label: 'WhatsApp Connections' },
         { to: '/admin/whatsapp-live', icon: MessageCircle, label: 'Live Chat' },
       ],
     },

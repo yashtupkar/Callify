@@ -72,6 +72,7 @@ class BaileysInstanceManager extends EventEmitter {
     this.instances = new Map(); // instanceId -> BaileysProvider
     this.authPath = process.env.BAILEYS_AUTH_FOLDER || './baileys_auth';
     this.agentMapping = new Map(); // instanceId -> agentId
+    this.standaloneInstances = new Set();
     this.persistenceFile = path.join(this.authPath, 'instances.json');
     this.loadPersistedInstances();
   }
@@ -253,12 +254,22 @@ class BaileysInstanceManager extends EventEmitter {
     this.emit('connectionUpdate', { instanceId, ...update });
   }
 
+  registerStandaloneInstance(instanceId) {
+    this.standaloneInstances.add(instanceId);
+  }
+
+  unregisterStandaloneInstance(instanceId) {
+    this.standaloneInstances.delete(instanceId);
+  }
+
   /**
    * Handle incoming messages - route through ConversationManager
    */
   async handleMessage(instanceId, message) {
     console.log(`[BaileysInstanceManager] Message received for ${instanceId} from ${message.from}`);
     this.emit('message', { instanceId, message });
+
+    if (this.standaloneInstances.has(instanceId)) return;
 
     // Get the provider
     const provider = this.instances.get(instanceId);

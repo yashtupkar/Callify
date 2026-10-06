@@ -219,8 +219,8 @@ export default function WhatsAppLivePage() {
             </div>
           )}
           <div className="text-xs text-muted-foreground">
-            Configure instances with <code>POST /api/whatsapp/instances</code> (admin only), or use the <Link to="/admin/whatsapp-numbers" className="text-primary underline">WhatsApp Numbers</Link> page.
-            Build & deploy automations on the <Link to="/admin/whatsapp-automations" className="text-primary underline">WhatsApp Agents</Link> page.
+            Configure connections from the <Link to="/admin/whatsapp-numbers" className="text-primary underline">WhatsApp Connections</Link> page.
+            Build and deploy automations from the <Link to="/admin/whatsapp-automations" className="text-primary underline">WhatsApp Automation</Link> page.
           </div>
         </CardContent>
       </Card>

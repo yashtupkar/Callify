@@ -311,13 +311,20 @@ class BaileysProvider extends WhatsAppProvider {
     }
 
     try {
-      const jid = to.includes('@') ? to : `${to}@s.whatsapp.net`;
+      const jid = this.normalizeRecipientJid(to);
       await this.socket.sendMessage(jid, { text: body });
-      console.log(`[BaileysProvider] Sent text to ${to}`);
+      console.log(`[BaileysProvider] Sent text to ${jid}`);
     } catch (error) {
       console.error('[BaileysProvider] Error sending text:', error);
       throw error;
     }
+
+  }
+
+  normalizeRecipientJid(to) {
+    const recipient = String(to || '').trim();
+    if (!recipient) throw new Error('WhatsApp recipient JID is required');
+    return recipient.includes('@') ? recipient : `${recipient}@s.whatsapp.net`;
   }
 
   async sendPoll(to, body, options) {

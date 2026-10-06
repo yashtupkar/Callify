@@ -22,10 +22,11 @@ class WhatsAppChannelAdapter extends ChannelAdapter {
    * @param {string} opts.businessPhoneNumber  Our receiving number (E.164)
    * @param {string} opts.instanceId
    */
-  constructor({ provider, contactWaId, businessPhoneNumber, instanceId }) {
+  constructor({ provider, contactWaId, contactJid, businessPhoneNumber, instanceId }) {
     super();
     this.provider = provider;
     this.contactWaId = contactWaId;
+    this.contactJid = contactJid || contactWaId;
     this.businessPhoneNumber = businessPhoneNumber;
     this.instanceId = instanceId;
     this.contactProfileName = null;
@@ -77,7 +78,7 @@ class WhatsAppChannelAdapter extends ChannelAdapter {
   async sendText(text) {
     if (!text) return;
     try {
-      await this.provider.sendText(this.contactWaId, text);
+      await this.provider.sendText(this.contactJid, text);
     } catch (err) {
       console.error('[WhatsAppChannelAdapter] sendText error:', err.message);
       this.emit('error', err);
@@ -86,7 +87,7 @@ class WhatsAppChannelAdapter extends ChannelAdapter {
 
   async sendImage(url, caption) {
     try {
-      await this.provider.sendImage(this.contactWaId, url, caption);
+      await this.provider.sendImage(this.contactJid, url, caption);
     } catch (err) {
       console.error('[WhatsAppChannelAdapter] sendImage error:', err.message);
       this.emit('error', err);
@@ -95,7 +96,7 @@ class WhatsAppChannelAdapter extends ChannelAdapter {
 
   async sendDocument(url, filename) {
     try {
-      await this.provider.sendDocument(this.contactWaId, url, filename);
+      await this.provider.sendDocument(this.contactJid, url, filename);
     } catch (err) {
       console.error('[WhatsAppChannelAdapter] sendDocument error:', err.message);
       this.emit('error', err);

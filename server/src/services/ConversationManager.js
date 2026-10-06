@@ -24,17 +24,18 @@ const LANGUAGE_TTS_PROVIDERS = {
 };
 
 class ConversationManager extends EventEmitter {
-  constructor(channelAdapter, providerConfig = null) {
+  constructor(channelAdapter, providerConfig = null, options = {}) {
     super();
     this.channel = channelAdapter;
+    this.textOnly = options.textOnly === true;
 
     // Explicit State Machine
     this.state = 'CREATED'; // CREATED, CONNECTING, CONNECTED, LISTENING, THINKING, SPEAKING, INTERRUPTED, ENDING, ERROR
 
     this.providerConfig = providerConfig;
     this.llm = createLLM(providerConfig?.llm);
-    this.stt = createSTT(providerConfig?.stt);
-    this.tts = createTTS(providerConfig?.tts);
+    this.stt = this.textOnly ? new EventEmitter() : createSTT(providerConfig?.stt);
+    this.tts = this.textOnly ? null : createTTS(providerConfig?.tts);
 
     this.usageTracker = new UsageTracker();
     this.costCalculator = new CostCalculator();
@@ -163,13 +164,15 @@ class ConversationManager extends EventEmitter {
 
     this.llm.on('llm_token', (token) => {
       // Feed tokens to TTS for streaming speech synthesis
-      this.tts.feedText(token);
+      if (!this.textOnly) this.tts.feedText(token);
     });
 
     this.llm.on('llm_reply_complete', (fullReply) => {
       this.transcript.push({ role: 'assistant', content: fullReply });
       this.sendToClient({ event: 'transcript', data: { text: fullReply, isFinal: true, speaker: 'agent' } });
-      this.tts.flush(); // Flush the TTS stream since the utterance is complete
+      if (!this.textOnly) {
+        this.tts.flush(); // Flush the TTS stream since the utterance is complete
+      }
     });
 
     this.llm.on('token_usage', (usageObj) => {
@@ -198,7 +201,7 @@ class ConversationManager extends EventEmitter {
     });
 
     // TTS Events
-    this.setupTtsListeners();
+    if (!this.textOnly) this.setupTtsListeners();
   }
 
   async startConversation(config, provider = 'browser') {
@@ -211,7 +214,7 @@ class ConversationManager extends EventEmitter {
     this.language = language;
     const baseLang = language.split('-')[0].toLowerCase();
 
-    if (!this.providerConfig?.tts?.provider && LANGUAGE_TTS_PROVIDERS[baseLang]) {
+    if (!this.textOnly && !this.providerConfig?.tts?.provider && LANGUAGE_TTS_PROVIDERS[baseLang]) {
       console.log(`[ConversationManager] ${baseLang} selected, overriding TTS provider`);
       this.tts = LANGUAGE_TTS_PROVIDERS[baseLang]();
       this.setupTtsListeners();
@@ -222,7 +225,7 @@ class ConversationManager extends EventEmitter {
     }
 
     // Process Voice Customization
-    if (config.voiceId && config.voiceId !== 'default') {
+    if (!this.textOnly && config.voiceId && config.voiceId !== 'default') {
       if (typeof this.tts.setVoiceId === 'function') {
         this.tts.setVoiceId(config.voiceId);
       }
@@ -263,11 +266,19 @@ class ConversationManager extends EventEmitter {
     this.registry.injectInternalCrmTools();
 
     this.llm.initialize(fullPrompt);
-    this.stt.connect(provider, language).catch(e => console.error('[ConversationManager] STT connect error:', e));
+    if (!this.textOnly) {
+      this.stt.connect(provider, language).catch(e => console.error('[ConversationManager] STT connect error:', e));
+    }
 
     // Kick off the conversation with an instant greeting
     const assistantName = config.assistantName || DEFAULT_ASSISTANT_NAME;
     const greeting = config.firstMessage || `Hi, thanks for calling! This is ${assistantName}, you've reached our reception desk. How can I help you today?`;
+    if (this.textOnly) {
+      this.transcript.push({ role: 'assistant', content: greeting });
+      await this.channel.sendText(greeting);
+      return;
+    }
+
     this.transcript.push({ role: 'assistant', content: greeting });
     this.sendToClient({ event: 'transcript', data: { text: greeting, isFinal: true, speaker: 'agent' } });
 
@@ -476,6 +487,11 @@ class ConversationManager extends EventEmitter {
 
   sendToClient(msg) {
     if (this.channel) {
+      if (this.textOnly && msg?.event === 'transcript' && msg.data?.speaker === 'agent' && msg.data.text) {
+        this.channel.sendText(msg.data.text).catch(error => {
+          console.error('[ConversationManager] WhatsApp text send error:', error);
+        });
+      }
       this.channel.sendControlMessage(msg);
     }
   }

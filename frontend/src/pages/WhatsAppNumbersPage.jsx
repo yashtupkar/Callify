@@ -3,7 +3,7 @@ import axios from 'axios';
 import { QRCodeSVG } from 'qrcode.react';
 import {
   MessageCircle, Plus, Loader2, Trash2, Send, Wifi, WifiOff,
-  QrCode, Phone, RefreshCcw, CheckCircle2, XCircle, Unplug, Bot, Link2,
+  QrCode, Phone, RefreshCcw, CheckCircle2, XCircle, Unplug, Link2,
 } from 'lucide-react';
 import { SERVER_URL, WS_URL } from '@/lib/constants';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
@@ -22,21 +22,12 @@ const STATUS_CONFIG = {
 export default function WhatsAppNumbersPage() {
   const { isAdmin } = useAuth();
   const [instances, setInstances] = useState([]);
-  const [agents, setAgents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showNew, setShowNew] = useState(false);
   const [newInstanceId, setNewInstanceId] = useState('');
   const [creating, setCreating] = useState(false);
   const wsRef = useRef(null);
   const reconnectTimerRef = useRef(null);
-
-  // Fetch agents for the dropdown
-  const fetchAgents = useCallback(async () => {
-    try {
-      const r = await axios.get(`${SERVER_URL}/api/agents`);
-      setAgents(r.data || []);
-    } catch (e) { console.error(e); }
-  }, []);
 
   // Fetch instances via REST (initial load)
   const fetchInstances = useCallback(async () => {
@@ -97,7 +88,6 @@ export default function WhatsAppNumbersPage() {
 
   useEffect(() => {
     if (!isAdmin) return;
-    fetchAgents();
     fetchInstances();
     connectWebSocket();
 
@@ -105,7 +95,7 @@ export default function WhatsAppNumbersPage() {
       if (wsRef.current) wsRef.current.close();
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
     };
-  }, [isAdmin, fetchAgents, fetchInstances, connectWebSocket]);
+  }, [isAdmin, fetchInstances, connectWebSocket]);
 
   const createInstance = async () => {
     if (!newInstanceId.trim()) return;
@@ -134,17 +124,6 @@ export default function WhatsAppNumbersPage() {
   const reconnectInstance = async (instanceId) => {
     try {
       await axios.post(`${SERVER_URL}/api/baileys/instance/${instanceId}/reconnect`);
-    } catch (e) {
-      alert(e.response?.data?.error || e.message);
-    }
-  };
-
-  const assignAgent = async (instanceId, agentId) => {
-    try {
-      await axios.put(`${SERVER_URL}/api/baileys/instance/${instanceId}/agent`, { agentId });
-      setInstances(prev => prev.map(inst =>
-        inst.instanceId === instanceId ? { ...inst, agentId } : inst
-      ));
     } catch (e) {
       alert(e.response?.data?.error || e.message);
     }
@@ -230,10 +209,8 @@ export default function WhatsAppNumbersPage() {
           <InstanceCard
             key={inst.instanceId}
             instance={inst}
-            agents={agents}
             onRemove={removeInstance}
             onReconnect={reconnectInstance}
-            onAssignAgent={assignAgent}
           />
         ))}
       </div>
@@ -241,7 +218,7 @@ export default function WhatsAppNumbersPage() {
   );
 }
 
-function InstanceCard({ instance, agents, onRemove, onReconnect, onAssignAgent }) {
+function InstanceCard({ instance, onRemove, onReconnect }) {
   const statusKey = instance.status || 'disconnected';
   const cfg = STATUS_CONFIG[statusKey] || STATUS_CONFIG.disconnected;
   const StatusIcon = cfg.icon;
@@ -314,28 +291,6 @@ function InstanceCard({ instance, agents, onRemove, onReconnect, onAssignAgent }
             </Button>
           </div>
         )}
-
-        {/* Agent assignment */}
-        <div className="space-y-1.5">
-          <label className="text-xs font-medium text-muted-foreground flex items-center gap-1">
-            <Bot className="w-3 h-3" /> Assigned Agent
-          </label>
-          <select
-            value={instance.agentId || ''}
-            onChange={e => onAssignAgent(instance.instanceId, e.target.value)}
-            className="w-full border rounded-md px-3 py-2 text-sm bg-background hover:bg-muted/50 transition-colors cursor-pointer"
-          >
-            <option value="">— No agent assigned —</option>
-            {agents.map(a => (
-              <option key={a.id} value={a.id}>{a.name}</option>
-            ))}
-          </select>
-          {!instance.agentId && (
-            <p className="text-[11px] text-amber-600">
-              ⚠ Assign an agent to auto-reply to incoming messages.
-            </p>
-          )}
-        </div>
 
         {/* Actions */}
         <div className="flex gap-2 pt-1 border-t border-border">

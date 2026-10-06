@@ -2,47 +2,131 @@ generator client {
   provider = "prisma-client-js"
 }
 
+// Standalone WhatsApp automation domain. WhatsAppInstance remains for legacy
+// clients; new automation APIs use these provider-neutral records.
+model WhatsAppAutomation {
+  id                 String   @id @default(uuid())
+  workspaceId        String
+  name               String
+  description        String?
+  status             String   @default("draft")
+  language           String?  @default("en-US")
+  supportedLanguages String[] @default([])
+  systemPrompt       String
+  initialMessage     String?
+  businessName       String?
+  timezone           String?  @default("Asia/Kolkata")
+  promptConfig       Json?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  workspace   Workspace                   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  connections WhatsAppConnection[]
+  tools       WhatsAppAutomationTool[]
+  sessions    WhatsAppAutomationSession[]
+
+  @@index([workspaceId, status])
+}
+
+model WhatsAppConnection {
+  id            String   @id @default(uuid())
+  automationId  String
+  provider      String
+  phoneNumber   String
+  phoneNumberId String?
+  businessId    String?
+  instanceId    String?
+  apiToken      String?
+  verifyToken   String?
+  appSecret     String?
+  credentials   Json?
+  enabled       Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  automation WhatsAppAutomation          @relation(fields: [automationId], references: [id], onDelete: Cascade)
+  sessions   WhatsAppAutomationSession[]
+
+  @@unique([automationId, phoneNumber])
+  @@index([provider, enabled])
+}
+
+model WhatsAppAutomationTool {
+  id           String   @id @default(uuid())
+  automationId String
+  name         String
+  description  String?
+  schema       Json
+  config       Json?
+  enabled      Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  automation WhatsAppAutomation @relation(fields: [automationId], references: [id], onDelete: Cascade)
+
+  @@unique([automationId, name])
+}
+
+model WhatsAppAutomationSession {
+  id             String   @id @default(uuid())
+  automationId   String
+  connectionId   String
+  contactWaId    String
+  status         String   @default("active")
+  transcript     Json?
+  lastActivityAt DateTime @default(now())
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  automation WhatsAppAutomation @relation(fields: [automationId], references: [id], onDelete: Cascade)
+  connection WhatsAppConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  @@unique([connectionId, contactWaId])
+  @@index([automationId, status])
+}
+
 datasource db {
   provider = "postgresql"
 }
 
 model Workspace {
-  id           String        @id @default(uuid())
-  name         String
-  createdAt    DateTime      @default(now())
-  updatedAt    DateTime      @updatedAt
+  id        String   @id @default(uuid())
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  agents            Agent[]
-  phoneNumbers      PhoneNumber[]
-  callSessions      CallSession[]
-  whatsAppInstances WhatsAppInstance[]
+  agents              Agent[]
+  phoneNumbers        PhoneNumber[]
+  callSessions        CallSession[]
+  whatsAppInstances   WhatsAppInstance[]
+  whatsAppAutomations WhatsAppAutomation[]
 }
 
 model Agent {
-  id                     String        @id @default(uuid())
-  workspaceId            String
-  type                   String        @default("general") // 'dental', 'general', etc.
-  name                   String
-  systemPrompt           String
-  conversationGuidelines String?
-  initialMessage         String
-  voiceId                String?
-  language               String?       @default("en-US")
-  timezone               String?       @default("Asia/Kolkata")
-  slotDuration           Int           @default(60)
-  tools                  Json?
-  enableEmailConfirmation    Boolean       @default(false)
-  enableWhatsAppConfirmation Boolean       @default(false)
-  whatsappEnabled          Boolean       @default(false)
-  automationPurpose        String?       // 'booking' | 'lead_capture' | 'support' | 'sales' | 'custom'
-  automationStatus         String        @default("draft") // 'draft' | 'active' | 'paused'
-  allowedEmails              String[]      @default([])
-  providers              Json?
-  flowConfig             Json?
-  createdAt              DateTime      @default(now())
-  updatedAt              DateTime      @updatedAt
-  
-  workspace      Workspace     @relation(fields: [workspaceId], references: [id])
+  id                         String   @id @default(uuid())
+  workspaceId                String
+  type                       String   @default("general") // 'dental', 'general', etc.
+  name                       String
+  systemPrompt               String
+  conversationGuidelines     String?
+  initialMessage             String
+  voiceId                    String?
+  language                   String?  @default("en-US")
+  timezone                   String?  @default("Asia/Kolkata")
+  slotDuration               Int      @default(60)
+  tools                      Json?
+  enableEmailConfirmation    Boolean  @default(false)
+  enableWhatsAppConfirmation Boolean  @default(false)
+  whatsappEnabled            Boolean  @default(false)
+  automationPurpose          String? // 'booking' | 'lead_capture' | 'support' | 'sales' | 'custom'
+  automationStatus           String   @default("draft") // 'draft' | 'active' | 'paused'
+  allowedEmails              String[] @default([])
+  providers                  Json?
+  flowConfig                 Json?
+  createdAt                  DateTime @default(now())
+  updatedAt                  DateTime @updatedAt
+
+  workspace      Workspace      @relation(fields: [workspaceId], references: [id])
   phoneNumbers   PhoneNumber[]
   callSessions   CallSession[]
   contacts       Contact[]
@@ -51,31 +135,31 @@ model Agent {
 }
 
 model PhoneNumber {
-  id                 String    @id @default(uuid())
+  id                 String   @id @default(uuid())
   workspaceId        String?
-  phoneNumber        String    @unique
+  phoneNumber        String   @unique
   agentId            String?
-  channel            String    @default("voice") // 'voice' | 'whatsapp'
+  channel            String   @default("voice") // 'voice' | 'whatsapp'
   whatsAppInstanceId String?
-  createdAt          DateTime  @default(now())
-  updatedAt          DateTime  @updatedAt
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
 
-  workspace         Workspace?        @relation(fields: [workspaceId], references: [id])
-  agent             Agent?            @relation(fields: [agentId], references: [id])
-  whatsAppInstance  WhatsAppInstance? @relation(fields: [whatsAppInstanceId], references: [id])
+  workspace        Workspace?        @relation(fields: [workspaceId], references: [id])
+  agent            Agent?            @relation(fields: [agentId], references: [id])
+  whatsAppInstance WhatsAppInstance? @relation(fields: [whatsAppInstanceId], references: [id])
 }
 
 model WhatsAppInstance {
   id            String   @id @default(uuid())
   workspaceId   String
-  provider      String   // 'ultramsg' | 'cloud_api'
-  phoneNumber   String   // E.164
-  phoneNumberId String?  // Meta Cloud API phone number id
-  instanceId    String?  // Ultramsg instance id
+  provider      String // 'ultramsg' | 'cloud_api'
+  phoneNumber   String // E.164
+  phoneNumberId String? // Meta Cloud API phone number id
+  instanceId    String? // Ultramsg instance id
   apiToken      String
   verifyToken   String
-  businessId    String?  // Meta WABA id
-  appSecret     String?  // Meta app secret for X-Hub-Signature-256 verification
+  businessId    String? // Meta WABA id
+  appSecret     String? // Meta app secret for X-Hub-Signature-256 verification
   enabled       Boolean  @default(true)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
@@ -87,70 +171,70 @@ model WhatsAppInstance {
 }
 
 model CallSession {
-  id                  String    @id @default(uuid())
-  workspaceId         String?
-  agentId             String?
-  createdAt           DateTime  @default(now())
-  endedAt             DateTime?
-  provider            String    @default("browser_websocket")
-  
-  // Costs
-  sttCost             Float     @default(0.0)
-  llmCost             Float     @default(0.0)
-  ttsCost             Float     @default(0.0)
-  totalCost           Float     @default(0.0)
-  
-  // Usage tracking
-  sttDurationSeconds  Int       @default(0)
-  llmPromptTokens     Int       @default(0)
-  llmCompletionTokens Int       @default(0)
-  ttsCharacters       Int       @default(0)
-  toolCalls           Int       @default(0)
-  
-  // Full raw transcript payload
-  transcript          Json?
+  id          String    @id @default(uuid())
+  workspaceId String?
+  agentId     String?
+  createdAt   DateTime  @default(now())
+  endedAt     DateTime?
+  provider    String    @default("browser_websocket")
 
-  workspace           Workspace? @relation(fields: [workspaceId], references: [id])
-  agent               Agent?     @relation(fields: [agentId], references: [id])
+  // Costs
+  sttCost   Float @default(0.0)
+  llmCost   Float @default(0.0)
+  ttsCost   Float @default(0.0)
+  totalCost Float @default(0.0)
+
+  // Usage tracking
+  sttDurationSeconds  Int @default(0)
+  llmPromptTokens     Int @default(0)
+  llmCompletionTokens Int @default(0)
+  ttsCharacters       Int @default(0)
+  toolCalls           Int @default(0)
+
+  // Full raw transcript payload
+  transcript Json?
+
+  workspace Workspace? @relation(fields: [workspaceId], references: [id])
+  agent     Agent?     @relation(fields: [agentId], references: [id])
 }
 
 model Contact {
-  id          String    @id @default(uuid())
-  agentId     String
-  name        String?
-  email       String?
-  phone       String?
-  metadata    Json?     // Stores extra fields like budget, company, etc.
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  id        String   @id @default(uuid())
+  agentId   String
+  name      String?
+  email     String?
+  phone     String?
+  metadata  Json? // Stores extra fields like budget, company, etc.
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  agent       Agent     @relation(fields: [agentId], references: [id], onDelete: Cascade)
-  bookings    Booking[]
+  agent    Agent     @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  bookings Booking[]
 }
 
 model Booking {
-  id          String    @id @default(uuid())
-  agentId     String
-  contactId   String
-  startTime   DateTime
-  endTime     DateTime
-  status      String    @default("confirmed") // 'confirmed', 'cancelled'
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  id        String   @id @default(uuid())
+  agentId   String
+  contactId String
+  startTime DateTime
+  endTime   DateTime
+  status    String   @default("confirmed") // 'confirmed', 'cancelled'
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  agent       Agent     @relation(fields: [agentId], references: [id], onDelete: Cascade)
-  contact     Contact   @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  agent   Agent   @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
 }
 
 model Availability {
-  id          String    @id @default(uuid())
-  agentId     String
-  dayOfWeek   Int       // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
-  startTime   String    // e.g. "09:00"
-  endTime     String    // e.g. "17:00"
-  isActive    Boolean   @default(true)
+  id        String  @id @default(uuid())
+  agentId   String
+  dayOfWeek Int // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
+  startTime String // e.g. "09:00"
+  endTime   String // e.g. "17:00"
+  isActive  Boolean @default(true)
 
-  agent       Agent     @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  agent Agent @relation(fields: [agentId], references: [id], onDelete: Cascade)
 
   @@unique([agentId, dayOfWeek])
 }
@@ -161,11 +245,11 @@ enum UserRole {
 }
 
 model User {
-  id           String    @id @default(uuid())
-  email        String    @unique
+  id           String   @id @default(uuid())
+  email        String   @unique
   passwordHash String
   name         String?
-  role         UserRole  @default(user)
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  role         UserRole @default(user)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 }
