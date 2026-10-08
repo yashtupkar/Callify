@@ -83,6 +83,50 @@ class WhatsAppProvider {
   }
 
   /**
+   * Send an interactive CTA URL message.
+   */
+  async sendCTAUrl(to, body, buttonTitle, url, header = null, footer = null) {
+    throw new Error('sendCTAUrl() not supported by this provider');
+  }
+
+  /**
+   * Send a media message (image, video, or document).
+   */
+  async sendMedia(to, mediaType, urlOrId, caption = null, filename = null) {
+    throw new Error('sendMedia() not supported by this provider');
+  }
+
+  /**
+   * Send a WhatsApp Flow interactive message.
+   */
+  async sendFlow(to, body, flowId, cta = 'Start', screen = null, data = null, flowToken = null, header = null, footer = null) {
+    throw new Error('sendFlow() not supported by this provider');
+  }
+
+  /**
+   * Send a location message.
+   */
+  async sendLocation(to, latitude, longitude, name = null, address = null) {
+    throw new Error('sendLocation() not supported by this provider');
+  }
+
+  /**
+   * Send a raw pre-constructed message payload to the provider API.
+   */
+  async sendMessagePayload(payload) {
+    throw new Error('sendMessagePayload() not supported by this provider');
+  }
+
+  /**
+   * Parse delivery status updates from an inbound webhook request.
+   * @param {object} req
+   * @returns {Array<{ providerMessageId: string, status: string, timestamp: number, recipientId?: string, error?: object }>}
+   */
+  parseStatusUpdates(req) {
+    return [];
+  }
+
+  /**
    * Download media bytes for transcription/inspection.
    * Returns { buffer: Buffer, mime: string }.
    */

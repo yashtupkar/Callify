@@ -11,9 +11,9 @@ const { routes: whatsappAutomationRouter, WhatsAppAutomationInboundRouter, initi
 const app = express();
 app.use(cors({ origin: true, credentials: true }));
 
-// Capture raw body for Meta signature verification on the WhatsApp webhook
+// Capture raw body for Meta signature verification on the WhatsApp webhook (POST only)
 app.use((req, res, next) => {
-  if (req.path.startsWith('/api/whatsapp-automation/webhook')) {
+  if ((req.path.startsWith('/api/whatsapp-automation/webhook') || req.path.startsWith('/api/whatsapp/webhook')) && req.method === 'POST') {
     let data = '';
     req.setEncoding('utf8');
     req.on('data', chunk => { data += chunk; });
@@ -29,6 +29,11 @@ app.use((req, res, next) => {
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
+
+// WhatsApp automation public webhooks (MUST be mounted before auth-protected routers)
+app.all('/api/whatsapp-automation/webhook', (req, res) => WhatsAppAutomationInboundRouter.handle(req, res));
+app.all('/api/whatsapp-automation/webhook/:connectionId', (req, res) => WhatsAppAutomationInboundRouter.handle(req, res));
+app.all('/api/whatsapp/webhook', (req, res) => WhatsAppAutomationInboundRouter.handle(req, res));
 
 const path = require('path');
 app.use(express.static(path.join(__dirname, '../client')));
@@ -49,9 +54,6 @@ app.use('/api/whatsapp-automation', whatsappAutomationRouter);
 
 const baileysRouter = require('./src/routes/baileys');
 app.use('/api/baileys', baileysRouter);
-
-// WhatsApp automation webhooks
-app.all('/api/whatsapp-automation/webhook/:connectionId', (req, res) => WhatsAppAutomationInboundRouter.handle(req, res));
 
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', service: 'realtime-voice-service' });

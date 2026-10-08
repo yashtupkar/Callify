@@ -10,11 +10,12 @@ function createWhatsAppAutomationProvider(connection) {
   const provider = String(connection.provider || '').toLowerCase();
   if (provider === 'cloud_api' || provider === 'meta_cloud' || provider === 'meta') {
     return new CloudApiProvider({
-      phoneNumberId: connection.phoneNumberId,
-      businessId: connection.businessId,
-      apiToken: connection.apiToken,
-      verifyToken: connection.verifyToken,
-      appSecret: connection.appSecret,
+      phoneNumberId: connection.phoneNumberId || process.env.WHATSAPP_PHONE_NUMBER_ID,
+      businessId: connection.businessId || process.env.WHATSAPP_BUSINESS_ACCOUNT_ID,
+      apiToken: connection.apiToken || process.env.WHATSAPP_ACCESS_TOKEN,
+      verifyToken: connection.verifyToken || process.env.WHATSAPP_VERIFY_TOKEN,
+      appSecret: connection.appSecret || process.env.WHATSAPP_APP_SECRET,
+      apiVersion: connection.credentials?.apiVersion || process.env.WHATSAPP_API_VERSION || 'v20.0',
     });
   }
   if (provider === 'baileys') {

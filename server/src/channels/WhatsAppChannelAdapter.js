@@ -81,19 +81,54 @@ class WhatsAppChannelAdapter extends ChannelAdapter {
 
   // ---- Outbound methods (called by ConversationManager) ------------------
 
-  async sendText(text) {
+  async sendText(text, context = {}) {
     if (!text) return;
     try {
-      await this.provider.sendText(this.contactJid, text);
+      const { sendWhatsAppResponse } = require('../whatsappAutomation/responseDispatcher');
+      const result = await sendWhatsAppResponse({
+        provider: this.provider,
+        recipient: this.contactJid,
+        response: text,
+        context: {
+          ...context,
+          contactWaId: this.contactWaId,
+          businessPhoneNumber: this.businessPhoneNumber,
+          instanceId: this.instanceId,
+        },
+      });
+      return result;
     } catch (err) {
       console.error('[WhatsAppChannelAdapter] sendText error:', err.message);
       this.emit('error', err);
     }
   }
 
+  async sendResponse(response, context = {}) {
+    if (!response) return;
+    try {
+      const { sendWhatsAppResponse } = require('../whatsappAutomation/responseDispatcher');
+      return await sendWhatsAppResponse({
+        provider: this.provider,
+        recipient: this.contactJid,
+        response,
+        context: {
+          ...context,
+          contactWaId: this.contactWaId,
+          businessPhoneNumber: this.businessPhoneNumber,
+          instanceId: this.instanceId,
+        },
+      });
+    } catch (err) {
+      console.error('[WhatsAppChannelAdapter] sendResponse error:', err.message);
+      this.emit('error', err);
+    }
+  }
+
   async sendImage(url, caption) {
     try {
-      await this.provider.sendImage(this.contactJid, url, caption);
+      if (typeof this.provider.sendImage === 'function') {
+        await this.provider.sendImage(this.contactJid, url, caption);
+      }
     } catch (err) {
       console.error('[WhatsAppChannelAdapter] sendImage error:', err.message);
       this.emit('error', err);
@@ -102,7 +137,9 @@ class WhatsAppChannelAdapter extends ChannelAdapter {
 
   async sendDocument(url, filename) {
     try {
-      await this.provider.sendDocument(this.contactJid, url, filename);
+      if (typeof this.provider.sendDocument === 'function') {
+        await this.provider.sendDocument(this.contactJid, url, filename);
+      }
     } catch (err) {
       console.error('[WhatsAppChannelAdapter] sendDocument error:', err.message);
       this.emit('error', err);
