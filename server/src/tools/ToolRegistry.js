@@ -199,6 +199,19 @@ class ToolRegistry {
   isWebhook(name)  { return this._webhook.has(name); }
   isCustom(name)   { return this._custom.has(name);  }
 
+  /**
+   * Remove a tool from every category it might live in. Safe to call for
+   * tools that are not registered (no-op). Used by the WhatsApp runtime to
+   * drop built-in CRM actions that are not enabled for a given automation.
+   *
+   * @param {string} name
+   */
+  remove(name) {
+    this._builtIn.delete(name);
+    this._webhook.delete(name);
+    this._custom.delete(name);
+  }
+
   getWebhookConfig(name) { return this._webhook.get(name)?.config || null; }
 
   async execute(name, args) {

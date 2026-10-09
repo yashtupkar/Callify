@@ -7,6 +7,8 @@ const { store } = require('./sessionStore');
 const router = express.Router();
 router.use(authMiddleware);
 
+
+
 async function resolveWorkspaceId(req) {
   if (req.user.workspaceId) return req.user.workspaceId;
   const workspace = await dbService.prisma.workspace.findFirst({
@@ -30,24 +32,44 @@ router.get('/', async (req, res) => {
 
 router.post('/', requireAdmin, async (req, res) => {
   try {
-    const { name, description, language, supportedLanguages, systemPrompt, initialMessage, businessName, timezone, status, promptConfig } = req.body || {};
-    if (!name || !systemPrompt) return res.status(400).json({ error: 'name and systemPrompt are required' });
+    const body = req.body || {};
+    const { name, description, language, supportedLanguages, initialMessage, businessName, timezone, status } = body;
+    const onboarding = body.onboarding || {};
+    const profile = {
+      ...(onboarding.businessProfile || body.businessProfile || {}),
+      businessName: businessName || onboarding.businessProfile?.businessName || body.businessProfile?.businessName,
+      industryLabel: onboarding.businessProfile?.industryLabel || body.businessProfile?.industryLabel,
+      description: description || onboarding.businessProfile?.description || body.businessProfile?.description,
+      language: language || onboarding.businessProfile?.language,
+      timezone: timezone || onboarding.businessProfile?.timezone,
+    };
+    const capabilities = onboarding.capabilities || body.capabilities || [];
+    const knowledgeSources = onboarding.knowledgeSources || body.knowledgeSources || [];
+    const tools = buildToolRows(capabilities, onboarding.tools || body.tools || []);
+    const systemPrompt = body.systemPrompt || buildGeneratedPrompt(profile, capabilities, knowledgeSources, tools.filter((tool) => tool.enabled).map((tool) => tool.name));
+    if (!name && !profile.businessName) return res.status(400).json({ error: 'businessName is required' });
     const workspaceId = await resolveWorkspaceId(req);
     if (!workspaceId) return res.status(500).json({ error: 'No workspace is configured for this account' });
-    const automation = await dbService.prisma.whatsAppAutomation.create({
-      data: {
+    const automation = await dbService.prisma.$transaction(async (tx) => {
+      const created = await tx.whatsAppAutomation.create({
+        data: {
         workspaceId,
-        name,
-        description: description || null,
+        name: name || profile.businessName,
+        description: description || profile.description || null,
         language: language || 'en-US',
         supportedLanguages: Array.isArray(supportedLanguages) ? supportedLanguages : [language || 'en-US'],
         systemPrompt,
         initialMessage: initialMessage || null,
-        businessName: businessName || null,
+        businessName: profile.businessName || null,
         timezone: timezone || 'Asia/Kolkata',
         status: status || 'active',
-        promptConfig: promptConfig || null,
+        promptConfig: {
+          onboarding: { ...onboarding, businessProfile: profile, capabilities, knowledgeSources, tools },
+        },
       },
+      });
+      if (tools.length) await tx.whatsAppAutomationTool.createMany({ data: tools.map((tool) => ({ ...tool, automationId: created.id })) });
+      return tx.whatsAppAutomation.findUnique({ where: { id: created.id }, include: { tools: true } });
     });
     res.status(201).json({ automation });
   } catch (error) {
@@ -79,16 +101,58 @@ router.get('/:automationId', async (req, res) => {
 
 router.put('/:automationId', requireAdmin, async (req, res) => {
   try {
-    const { name, description, language, supportedLanguages, systemPrompt, initialMessage, businessName, timezone, status, promptConfig } = req.body || {};
-    if (!name || !systemPrompt) return res.status(400).json({ error: 'name and systemPrompt are required' });
-    const workspaceId = await resolveWorkspaceId(req);
-    const automation = await dbService.prisma.whatsAppAutomation.updateMany({
-      where: { id: req.params.automationId, workspaceId },
-      data: { name, description, language, supportedLanguages, systemPrompt, initialMessage, businessName, timezone, status, promptConfig },
+    const body = req.body || {};
+    const { name, description, language, supportedLanguages, initialMessage, businessName, timezone, status } = body;
+    const existing = await dbService.prisma.whatsAppAutomation.findUnique({
+      where: { id: req.params.automationId },
+      include: { tools: true },
     });
-    if (!automation.count) return res.status(404).json({ error: 'Automation not found' });
+    if (!existing) return res.status(404).json({ error: 'Automation not found' });
+    const previousOnboarding = existing.promptConfig?.onboarding || {};
+    const onboarding = body.onboarding || {};
+    const profile = {
+      ...(previousOnboarding.businessProfile || {}),
+      ...(onboarding.businessProfile || body.businessProfile || {}),
+      businessName: businessName || onboarding.businessProfile?.businessName || body.businessProfile?.businessName || existing.businessName,
+      industryLabel: onboarding.businessProfile?.industryLabel || body.businessProfile?.industryLabel || previousOnboarding.businessProfile?.industryLabel,
+      description: description || onboarding.businessProfile?.description || body.businessProfile?.description || existing.description,
+      language: language || onboarding.businessProfile?.language || existing.language,
+      timezone: timezone || onboarding.businessProfile?.timezone || existing.timezone,
+    };
+    const capabilities = onboarding.capabilities || body.capabilities || previousOnboarding.capabilities || [];
+    const knowledgeSources = onboarding.knowledgeSources || body.knowledgeSources || previousOnboarding.knowledgeSources || [];
+    const suppliedTools = onboarding.tools || body.tools || previousOnboarding.tools || existing.tools;
+    const tools = buildToolRows(capabilities, suppliedTools);
+    const systemPrompt = body.systemPrompt || buildGeneratedPrompt(profile, capabilities, knowledgeSources, tools.filter((tool) => tool.enabled).map((tool) => tool.name));
+    const workspaceId = await resolveWorkspaceId(req);
+    const automation = await dbService.prisma.$transaction(async (tx) => {
+      const updated = await tx.whatsAppAutomation.updateMany({
+        where: { id: req.params.automationId, workspaceId },
+        data: {
+          name: name || profile.businessName,
+          description: description || profile.description || null,
+          language: language || profile.language || 'en-US',
+          supportedLanguages: Array.isArray(supportedLanguages) ? supportedLanguages : [language || profile.language || 'en-US'],
+          systemPrompt,
+          initialMessage: initialMessage || null,
+          businessName: profile.businessName || null,
+          timezone: timezone || profile.timezone || 'Asia/Kolkata',
+          status: status || existing.status,
+          promptConfig: {
+            ...(existing.promptConfig || {}),
+            ...body.promptConfig,
+            onboarding: { ...previousOnboarding, ...onboarding, businessProfile: profile, capabilities, knowledgeSources, tools },
+          },
+        },
+      });
+      if (!updated.count) return null;
+      await tx.whatsAppAutomationTool.deleteMany({ where: { automationId: req.params.automationId } });
+      if (tools.length) await tx.whatsAppAutomationTool.createMany({ data: tools.map((tool) => ({ ...tool, automationId: req.params.automationId })) });
+      return tx.whatsAppAutomation.findUnique({ where: { id: req.params.automationId }, include: { tools: true } });
+    });
+    if (!automation) return res.status(404).json({ error: 'Automation not found' });
     store.clearAutomation(req.params.automationId);
-    res.json({ ok: true });
+    res.json({ ok: true, automation });
   } catch (error) {
     console.error('[WhatsAppAutomation] update error:', error);
     res.status(500).json({ error: error.message || 'Failed to update WhatsApp automation' });
@@ -152,12 +216,49 @@ router.post('/:automationId/connections', requireAdmin, async (req, res) => {
 });
 
 router.put('/:automationId/connections/:connectionId', requireAdmin, async (req, res) => {
-  const connection = await dbService.prisma.whatsAppConnection.updateMany({
-    where: { id: req.params.connectionId, automationId: req.params.automationId, automation: { workspaceId: req.user.workspaceId } },
-    data: req.body || {},
-  });
-  if (!connection.count) return res.status(404).json({ error: 'Connection not found' });
-  res.json({ ok: true });
+  try {
+    const body = req.body || {};
+    const allowedFields = [
+      'provider',
+      'phoneNumber',
+      'phoneNumberId',
+      'businessId',
+      'instanceId',
+      'apiToken',
+      'verifyToken',
+      'appSecret',
+      'credentials',
+      'enabled',
+    ];
+    const data = Object.fromEntries(
+      allowedFields
+        .filter((field) => Object.prototype.hasOwnProperty.call(body, field))
+        .map((field) => [field, body[field]])
+    );
+
+    if (data.provider && !['baileys', 'cloud_api', 'meta_cloud', 'meta'].includes(data.provider)) {
+      return res.status(400).json({ error: 'Unsupported provider' });
+    }
+    if (data.phoneNumber !== undefined) {
+      data.phoneNumber = String(data.phoneNumber).trim();
+      if (!data.phoneNumber) return res.status(400).json({ error: 'phoneNumber cannot be empty' });
+    }
+    if (Object.keys(data).length === 0) return res.status(400).json({ error: 'No valid connection fields provided' });
+
+    const connection = await dbService.prisma.whatsAppConnection.updateMany({
+      where: {
+        id: req.params.connectionId,
+        automationId: req.params.automationId,
+        automation: { workspaceId: req.user.workspaceId },
+      },
+      data,
+    });
+    if (!connection.count) return res.status(404).json({ error: 'Connection not found' });
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('[WhatsAppAutomation] connection update error:', error);
+    res.status(500).json({ error: error.message || 'Failed to update WhatsApp connection' });
+  }
 });
 
 router.delete('/:automationId/connections/:connectionId', requireAdmin, async (req, res) => {
@@ -187,8 +288,16 @@ router.get('/:automationId/sessions', requireAdmin, (req, res) => {
 });
 
 function scrub(connection) {
-  const { apiToken, appSecret, ...safe } = connection;
-  return { ...safe, apiToken: apiToken ? '***' : null, appSecret: appSecret ? '***' : null };
+  const { apiToken, appSecret, credentials, ...safe } = connection;
+  const safeCredentials = credentials && typeof credentials === 'object'
+    ? { ...credentials, apiToken: credentials.apiToken ? '***' : credentials.apiToken, accessToken: credentials.accessToken ? '***' : credentials.accessToken, appSecret: credentials.appSecret ? '***' : credentials.appSecret }
+    : credentials;
+  return {
+    ...safe,
+    credentials: safeCredentials,
+    apiToken: apiToken ? '***' : null,
+    appSecret: appSecret ? '***' : null,
+  };
 }
 
 module.exports = router;
