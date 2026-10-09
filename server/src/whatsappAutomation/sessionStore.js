@@ -11,17 +11,43 @@ class WhatsAppAutomationSessionStore {
     if (!value || Date.now() - value.lastActivityAt > this.ttlMs) return null;
     return value;
   }
+  async load(connection, automation, contactWaId) {
+    const session = await dbService.prisma.whatsAppAutomationSession.findUnique({
+      where: { connectionId_contactWaId: { connectionId: connection.id, contactWaId } },
+    });
+    if (!session || Date.now() - session.lastActivityAt.getTime() > this.ttlMs) return null;
+    return {
+      connectionId: connection.id,
+      automationId: automation.id,
+      contactWaId,
+      transcript: Array.isArray(session.transcript) ? session.transcript : [],
+      status: session.status,
+      createdAt: session.createdAt.getTime(),
+      lastActivityAt: session.lastActivityAt.getTime(),
+    };
+  }
   async set(connection, automation, contactWaId, value) {
     const now = new Date();
     const key = this.key(connection.id, contactWaId);
-    this.sessions.set(key, { ...value, connectionId: connection.id, automationId: automation.id, contactWaId, createdAt: Date.now(), lastActivityAt: Date.now() });
+    const existing = this.sessions.get(key);
+    this.sessions.set(key, {
+      ...value,
+      connectionId: connection.id,
+      automationId: automation.id,
+      contactWaId,
+      createdAt: existing?.createdAt || value.createdAt || Date.now(),
+      lastActivityAt: Date.now(),
+    });
     try {
       await dbService.prisma.whatsAppAutomationSession.upsert({
         where: { connectionId_contactWaId: { connectionId: connection.id, contactWaId } },
         create: { automationId: automation.id, connectionId: connection.id, contactWaId, transcript: value.conversationManager?.transcript || [] },
         update: { lastActivityAt: now, transcript: value.conversationManager?.transcript || [] },
       });
-    } catch (err) { console.warn('[WhatsAppAutomationSessionStore] persistence failed:', err.message); }
+    } catch (err) {
+      console.error('[WhatsAppAutomationSessionStore] persistence failed:', err.message);
+      throw err;
+    }
   }
   touch(connectionId, contactWaId) {
     const value = this.get(connectionId, contactWaId);

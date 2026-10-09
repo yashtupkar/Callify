@@ -25,12 +25,6 @@ class WhatsAppAutomationInboundRouter {
               include: { automation: { include: { tools: true } } },
             });
           }
-          if (!connection && verifyToken && (verifyToken === process.env.WHATSAPP_VERIFY_TOKEN)) {
-            connection = await dbService.prisma.whatsAppConnection.findFirst({
-              where: { provider: { in: ['cloud_api', 'meta_cloud', 'meta'] }, enabled: true },
-              include: { automation: { include: { tools: true } } },
-            });
-          }
         } else if (req.method === 'POST') {
           const body = req.body || {};
           const metaPhoneId = body.entry?.[0]?.changes?.[0]?.value?.metadata?.phone_number_id;
@@ -45,12 +39,6 @@ class WhatsAppAutomationInboundRouter {
           if (!connection && wabaId) {
             connection = await dbService.prisma.whatsAppConnection.findFirst({
               where: { businessId: String(wabaId), enabled: true },
-              include: { automation: { include: { tools: true } } },
-            });
-          }
-          if (!connection) {
-            connection = await dbService.prisma.whatsAppConnection.findFirst({
-              where: { provider: { in: ['cloud_api', 'meta_cloud', 'meta'] }, enabled: true },
               include: { automation: { include: { tools: true } } },
             });
           }

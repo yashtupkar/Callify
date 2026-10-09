@@ -48,7 +48,7 @@ class WhatsAppConversationManager {
       this.sendToClient({
         event: 'transcript',
         data: {
-          text: reply,
+          text: displayContent,
           displayContent,
           normalized,
           isFinal: true,
@@ -94,7 +94,7 @@ class WhatsAppConversationManager {
         content: displayContent,
         richResponse: normalized,
       });
-      await this.channel.sendText(firstMessage);
+      await this.channel.sendResponse(normalized);
     }
   }
 
@@ -141,9 +141,9 @@ class WhatsAppConversationManager {
 
   sendToClient(message) {
     if (message?.event === 'transcript' && message.data?.speaker === 'agent') {
-      const payload = message.data.text;
+      const payload = message.data.normalized || message.data.text;
       if (payload) {
-        this.channel.sendText(payload).catch((error) => {
+        this.channel.sendResponse(payload).catch((error) => {
           console.error('[WhatsAppConversationManager] text send error:', error.message);
         });
       }
