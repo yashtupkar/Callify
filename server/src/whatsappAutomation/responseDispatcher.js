@@ -16,8 +16,10 @@
  *   Provider API / Network
  */
 
-const { normalizeWhatsAppResponse, extractPlainText } = require('./responseNormalizer');
+const { normalizeWhatsAppResponse, extractPlainText, VALID_RESPONSE_TYPES } = require('./responseNormalizer');
 const { buildMetaPayload } = require('./metaPayloadBuilder');
+const { dbService } = require('../services/DatabaseService');
+const { WhatsAppAutomationLogService } = require('./logService');
 
 const DEFAULT_CAPABILITIES = {
   buttons: true,
@@ -77,7 +79,13 @@ async function sendWhatsAppResponse({ provider, recipient, response, context = {
   }
 
   // Step 1: Normalize & Validate response
-  let normalized = normalizeWhatsAppResponse(response);
+  // Skip normalization if response is already normalized (has valid _type)
+  let normalized;
+  if (response && typeof response === 'object' && VALID_RESPONSE_TYPES.has(response._type)) {
+    normalized = response;
+  } else {
+    normalized = normalizeWhatsAppResponse(response);
+  }
 
   // Step 2: Capability check
   const capabilities = context.capabilities || context.connection?.credentials?.capabilities || {};
@@ -98,14 +106,49 @@ async function sendWhatsAppResponse({ provider, recipient, response, context = {
   }
 
   // Step 4: Route based on Provider type
+  let result;
   if (providerName === 'CloudApiProvider') {
-    return sendMetaCloudResponse({ provider, recipient, response: normalized, context });
+    result = await sendMetaCloudResponse({ provider, recipient, response: normalized, context });
   } else if (providerName === 'BaileysProvider') {
-    return sendBaileysResponse({ provider, recipient, response: normalized, context });
+    result = await sendBaileysResponse({ provider, recipient, response: normalized, context });
   } else {
     // Generic WhatsAppProvider fallback
-    return sendGenericResponse({ provider, recipient, response: normalized, context });
+    result = await sendGenericResponse({ provider, recipient, response: normalized, context });
   }
+
+  // Increment message counter on successful send
+  if (result?.success && context?.connectionId && context?.contactWaId) {
+    try {
+      await dbService.prisma.whatsAppAutomationSession.updateMany({
+        where: { connectionId: context.connectionId, contactWaId: context.contactWaId },
+        data: { messagesSent: { increment: 1 } },
+      });
+    } catch (err) {
+      console.error('[ResponseDispatcher] Failed to increment sent counter:', err.message);
+    }
+  }
+
+  // Log outgoing message
+  if (context?.automationId) {
+    try {
+      const log = WhatsAppAutomationLogService.build(context.automationId, {
+        connectionId: context.connectionId,
+        contactWaId: context.contactWaId,
+      });
+      await log.info('message', 'outgoing', `Sent ${normalized._type} message`, {
+        messageType: normalized._type,
+        recipient: maskPhoneNumber(recipient),
+        success: result?.success || false,
+        error: result?.error,
+      });
+    } catch (err) {
+      if (err.code !== 'P2021' && !err.message?.includes('does not exist')) {
+        console.error('[ResponseDispatcher] Log error:', err.message);
+      }
+    }
+  }
+
+  return result;
 }
 
 /**

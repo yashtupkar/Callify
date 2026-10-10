@@ -11,6 +11,11 @@ class LLMService extends LLMProvider {
     });
     this.systemPrompt = "You are a helpful AI conversational agent.";
     this.model = process.env.VOICE_LLM_MODEL || "openai/gpt-4o-mini";
+    this.enableJsonMode = false;
+  }
+
+  setJsonMode(enabled) {
+    this.enableJsonMode = enabled;
   }
 
   initialize(systemPrompt) {
@@ -73,6 +78,10 @@ class LLMService extends LLMProvider {
       if (tools && tools.length > 0) {
         options.tools       = tools;
         options.tool_choice = toolChoice; // 'auto', 'required', or 'none'
+        // Request JSON output format for structured responses (WhatsApp only)
+        if (this.enableJsonMode) {
+          options.response_format = { type: "json_object" };
+        }
       }
 
       const stream = await this.client.chat.completions.create(options, {

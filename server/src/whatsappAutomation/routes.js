@@ -7,6 +7,107 @@ const { store } = require('./sessionStore');
 const router = express.Router();
 router.use(authMiddleware);
 
+const BUILT_IN_TOOL_NAMES = [
+  'check_availability',
+  'create_booking',
+  'get_bookings',
+  'cancel_booking',
+  'reschedule_booking',
+  'get_pricing',
+  'save_collected_data',
+  'send_followup_email',
+  'send_whatsapp',
+  'transfer_call',
+];
+
+function buildToolRows(capabilities = [], suppliedTools = []) {
+  const configured = new Map(
+    (Array.isArray(suppliedTools) ? suppliedTools : [])
+      .filter((tool) => tool && tool.name)
+      .map((tool) => [tool.name, tool])
+  );
+  const requested = new Set(
+    (Array.isArray(capabilities) ? capabilities : [])
+      .map((capability) => typeof capability === 'string' ? capability : capability?.name)
+      .filter(Boolean)
+  );
+  const names = new Set([...BUILT_IN_TOOL_NAMES, ...requested, ...configured.keys()]);
+
+  return [...names].map((name) => {
+    const tool = configured.get(name) || {};
+    return {
+      name,
+      description: tool.description || `Business automation tool: ${name}`,
+      schema: tool.schema || {
+        type: 'function',
+        function: {
+          name,
+          description: tool.description || `Business automation tool: ${name}`,
+          parameters: { type: 'object', properties: {}, additionalProperties: true },
+        },
+      },
+      config: tool.config || null,
+      enabled: tool.enabled !== false && (requested.size === 0 || requested.has(name) || configured.has(name)),
+    };
+  });
+}
+
+function buildGeneratedPrompt(profile, capabilities, knowledgeSources, enabledTools) {
+  const businessName = profile.businessName || 'the business';
+  const facts = [profile.description, ...(Array.isArray(knowledgeSources) ? knowledgeSources : [])]
+    .filter(Boolean)
+    .join('\n');
+  const toolText = enabledTools.length ? enabledTools.join(', ') : 'none';
+  return [
+    `You are the WhatsApp assistant for ${businessName}.`,
+    facts ? `Business information:\n${facts}` : '',
+    `Use only confirmed business information. Enabled tools: ${toolText}.`,
+    `Reply concisely for WhatsApp. Ask for missing information before taking action.`,
+    `When sending interactive messages, return JSON with _type set to text, button, list, cta_url, media, template, flow, location, or handoff.`,
+    `Configured capabilities: ${Array.isArray(capabilities) ? capabilities.map((capability) => typeof capability === 'string' ? capability : capability?.name).filter(Boolean).join(', ') || 'none' : 'none'}.`,
+  ].filter(Boolean).join('\n\n');
+}
+
+async function syncSetupRecords(tx, automationId, setup) {
+  if (!setup || typeof setup !== 'object') return;
+  if (typeof setup.knowledge === 'string') {
+    await tx.whatsAppKnowledgeSource.deleteMany({ where: { automationId } });
+    if (setup.knowledge.trim()) {
+      await tx.whatsAppKnowledgeSource.create({
+        data: {
+          automationId,
+          type: 'text',
+          title: 'Business knowledge',
+          content: setup.knowledge.trim(),
+        },
+      });
+    }
+  }
+  if (Array.isArray(setup.products)) {
+    await tx.whatsAppProduct.deleteMany({ where: { automationId } });
+    const products = setup.products.filter(item => item?.name).map(item => ({
+      automationId, name: item.name, description: item.description || null,
+      price: item.price || null, category: item.category || null, imageUrl: item.imageUrl || null,
+    }));
+    if (products.length) await tx.whatsAppProduct.createMany({ data: products });
+  }
+  if (Array.isArray(setup.faqs)) {
+    await tx.whatsAppFaq.deleteMany({ where: { automationId } });
+    const faqs = setup.faqs.filter(item => item?.question && item?.answer).map((item, index) => ({
+      automationId, question: item.question, answer: item.answer,
+      keywords: Array.isArray(item.keywords) ? item.keywords : [], priority: index,
+    }));
+    if (faqs.length) await tx.whatsAppFaq.createMany({ data: faqs });
+  }
+  if (Array.isArray(setup.hours)) {
+    await tx.whatsAppBusinessHour.deleteMany({ where: { automationId } });
+    await tx.whatsAppBusinessHour.createMany({ data: setup.hours.map(hour => ({
+      automationId, dayOfWeek: Number(hour.dayOfWeek), enabled: Boolean(hour.enabled),
+      openTime: hour.openTime || null, closeTime: hour.closeTime || null,
+    })) });
+  }
+}
+
 
 
 async function resolveWorkspaceId(req) {
@@ -22,7 +123,7 @@ router.get('/', async (req, res) => {
   try {
     const workspaceId = await resolveWorkspaceId(req);
     const where = req.user.role === 'admin' ? {} : { workspaceId };
-    const automations = await dbService.prisma.whatsAppAutomation.findMany({ where, include: { connections: true, tools: true } });
+    const automations = await dbService.prisma.whatsAppAutomation.findMany({ where, include: { connections: true, tools: true, autoReplies: true } });
     res.json({ automations: automations.map(automation => ({ ...automation, connections: automation.connections.map(scrub) })) });
   } catch (error) {
     console.error('[WhatsAppAutomation] list error:', error);
@@ -51,6 +152,7 @@ router.post('/', requireAdmin, async (req, res) => {
     const workspaceId = await resolveWorkspaceId(req);
     if (!workspaceId) return res.status(500).json({ error: 'No workspace is configured for this account' });
     const automation = await dbService.prisma.$transaction(async (tx) => {
+      const setup = onboarding.setup || {};
       const created = await tx.whatsAppAutomation.create({
         data: {
         workspaceId,
@@ -63,18 +165,92 @@ router.post('/', requireAdmin, async (req, res) => {
         businessName: profile.businessName || null,
         timezone: timezone || 'Asia/Kolkata',
         status: status || 'active',
+        industry: setup.industry || profile.industryLabel || null,
+        businessPhone: setup.businessPhone || null,
+        businessEmail: setup.businessEmail || null,
+        websiteUrl: setup.websiteUrl || null,
+        address: setup.address || null,
+        fallbackMode: setup.fallbackMode || 'ai',
+        fallbackMessage: setup.fallbackMessage || null,
+        handoffMessage: setup.handoffMessage || null,
+        handoffKeywords: String(setup.handoffKeywords || '').split(',').map(value => value.trim()).filter(Boolean),
+        tone: setup.tone || 'friendly',
+        responseLength: setup.responseLength || 'balanced',
+        setupStep: Number(setup.step || 1),
+        setupCompleted: Boolean(setup.setupCompleted),
+        activatedAt: status === 'active' ? new Date() : null,
+        behaviorConfig: setup.behaviorConfig || null,
+        capabilities: setup.capabilities || capabilities,
         promptConfig: {
           onboarding: { ...onboarding, businessProfile: profile, capabilities, knowledgeSources, tools },
         },
       },
       });
       if (tools.length) await tx.whatsAppAutomationTool.createMany({ data: tools.map((tool) => ({ ...tool, automationId: created.id })) });
-      return tx.whatsAppAutomation.findUnique({ where: { id: created.id }, include: { tools: true } });
+      await syncSetupRecords(tx, created.id, setup);
+      return tx.whatsAppAutomation.findUnique({ where: { id: created.id }, include: { tools: true, autoReplies: true } });
     });
     res.status(201).json({ automation });
   } catch (error) {
     console.error('[WhatsAppAutomation] create error:', error);
     res.status(500).json({ error: error.message || 'Failed to create WhatsApp automation' });
+  }
+});
+
+// Checks Meta Cloud API credentials against the Graph API without saving anything.
+router.post('/verify-cloud', requireAdmin, async (req, res) => {
+  const axios = require('axios');
+  const { phoneNumberId, businessId, apiToken, apiVersion } = req.body || {};
+  const id = String(phoneNumberId || '').trim();
+  const waba = String(businessId || '').trim();
+  const token = String(apiToken || '').trim();
+  if (!id || !token) {
+    return res.status(400).json({ ok: false, error: 'Phone Number ID and access token are required.' });
+  }
+  const version = /^v\d+\.\d+$/.test(String(apiVersion || '')) ? apiVersion : (process.env.WHATSAPP_API_VERSION || 'v20.0');
+  const base = `https://graph.facebook.com/${version}`;
+  const headers = { Authorization: `Bearer ${token}` };
+  const fail = (error) => {
+    const message = error.response?.data?.error?.message || error.message || 'Verification failed';
+    return res.json({ ok: false, error: message });
+  };
+
+  try {
+    const { data: phone } = await axios.get(`${base}/${encodeURIComponent(id)}`, {
+      headers,
+      params: { fields: 'display_phone_number,verified_name,quality_rating' },
+      timeout: 10000,
+    });
+
+    let warning = null;
+    if (waba) {
+      try {
+        let url = `${base}/${encodeURIComponent(waba)}/phone_numbers`;
+        let params = { fields: 'id', limit: 100 };
+        let found = false;
+        for (let page = 0; url && page < 10 && !found; page += 1) {
+          const { data: list } = await axios.get(url, { headers, params, timeout: 10000 });
+          found = (list.data || []).some((item) => String(item.id) === id);
+          url = list.paging?.next || null;
+          params = undefined;
+        }
+        if (!found) {
+          warning = 'Token works, but this Phone Number ID was not found under the given WhatsApp Business Account ID.';
+        }
+      } catch (error) {
+        warning = `Token works, but the Business Account ID could not be checked: ${error.response?.data?.error?.message || error.message}`;
+      }
+    }
+
+    res.json({
+      ok: true,
+      warning,
+      displayPhoneNumber: phone.display_phone_number || null,
+      verifiedName: phone.verified_name || null,
+      qualityRating: phone.quality_rating || null,
+    });
+  } catch (error) {
+    fail(error);
   }
 });
 
@@ -89,7 +265,7 @@ router.get('/:automationId', async (req, res) => {
         id: req.params.automationId,
         ...(req.user.role === 'admin' ? {} : { workspaceId: req.user.workspaceId }),
       },
-      include: { connections: true, tools: true },
+      include: { connections: true, tools: true, autoReplies: true, products: true, faqs: true, businessHours: true, knowledgeSources: true },
     });
     if (!automation) return res.status(404).json({ error: 'Automation not found' });
     res.json({ automation: { ...automation, connections: automation.connections.map(scrub) } });
@@ -124,6 +300,7 @@ router.put('/:automationId', requireAdmin, async (req, res) => {
     const suppliedTools = onboarding.tools || body.tools || previousOnboarding.tools || existing.tools;
     const tools = buildToolRows(capabilities, suppliedTools);
     const systemPrompt = body.systemPrompt || buildGeneratedPrompt(profile, capabilities, knowledgeSources, tools.filter((tool) => tool.enabled).map((tool) => tool.name));
+    const setup = onboarding.setup || previousOnboarding.setup || {};
     const workspaceId = await resolveWorkspaceId(req);
     const automation = await dbService.prisma.$transaction(async (tx) => {
       const updated = await tx.whatsAppAutomation.updateMany({
@@ -138,6 +315,22 @@ router.put('/:automationId', requireAdmin, async (req, res) => {
           businessName: profile.businessName || null,
           timezone: timezone || profile.timezone || 'Asia/Kolkata',
           status: status || existing.status,
+          industry: setup.industry || profile.industryLabel || existing.industry,
+          businessPhone: setup.businessPhone || existing.businessPhone,
+          businessEmail: setup.businessEmail || existing.businessEmail,
+          websiteUrl: setup.websiteUrl || existing.websiteUrl,
+          address: setup.address || existing.address,
+          fallbackMode: setup.fallbackMode || existing.fallbackMode,
+          fallbackMessage: setup.fallbackMessage || existing.fallbackMessage,
+          handoffMessage: setup.handoffMessage || existing.handoffMessage,
+          handoffKeywords: String(setup.handoffKeywords || existing.handoffKeywords.join(',')).split(',').map(value => value.trim()).filter(Boolean),
+          tone: setup.tone || existing.tone,
+          responseLength: setup.responseLength || existing.responseLength,
+          setupStep: Number(setup.step || existing.setupStep),
+          setupCompleted: Boolean(setup.setupCompleted || existing.setupCompleted),
+          activatedAt: status === 'active' ? (existing.activatedAt || new Date()) : existing.activatedAt,
+          behaviorConfig: setup.behaviorConfig || existing.behaviorConfig,
+          capabilities: setup.capabilities || capabilities,
           promptConfig: {
             ...(existing.promptConfig || {}),
             ...body.promptConfig,
@@ -148,7 +341,8 @@ router.put('/:automationId', requireAdmin, async (req, res) => {
       if (!updated.count) return null;
       await tx.whatsAppAutomationTool.deleteMany({ where: { automationId: req.params.automationId } });
       if (tools.length) await tx.whatsAppAutomationTool.createMany({ data: tools.map((tool) => ({ ...tool, automationId: req.params.automationId })) });
-      return tx.whatsAppAutomation.findUnique({ where: { id: req.params.automationId }, include: { tools: true } });
+      await syncSetupRecords(tx, req.params.automationId, setup);
+      return tx.whatsAppAutomation.findUnique({ where: { id: req.params.automationId }, include: { tools: true, autoReplies: true } });
     });
     if (!automation) return res.status(404).json({ error: 'Automation not found' });
     store.clearAutomation(req.params.automationId);
@@ -285,6 +479,197 @@ router.get('/:automationId/connections/:connectionId/status', requireAdmin, asyn
 
 router.get('/:automationId/sessions', requireAdmin, (req, res) => {
   res.json({ sessions: store.list().filter(session => session.automationId === req.params.automationId).map(({ conversationManager, ...session }) => ({ ...session, messageCount: conversationManager?.transcript?.length || 0 })) });
+});
+
+// ============================================
+// LOGS API
+// ============================================
+
+router.get('/:automationId/logs', requireAdmin, async (req, res) => {
+  try {
+    const { WhatsAppAutomationLogService } = require('./logService');
+    const { level, category, sessionId, since, limit } = req.query;
+    const filters = {};
+    if (level) filters.level = level;
+    if (category) filters.category = category;
+    if (sessionId) filters.sessionId = sessionId;
+    if (since) filters.since = since;
+    if (limit) filters.limit = parseInt(limit, 10);
+    const logs = await WhatsAppAutomationLogService.query(req.params.automationId, filters);
+    res.json({ logs });
+  } catch (error) {
+    console.error('[WhatsAppAutomation] logs query error:', error);
+    res.status(500).json({ error: 'Failed to query logs' });
+  }
+});
+
+router.get('/:automationId/logs/stats', requireAdmin, async (req, res) => {
+  try {
+    const { WhatsAppAutomationLogService } = require('./logService');
+    const stats = await WhatsAppAutomationLogService.stats(req.params.automationId);
+    res.json({ stats });
+  } catch (error) {
+    console.error('[WhatsAppAutomation] logs stats error:', error);
+    res.status(500).json({ error: 'Failed to get log stats' });
+  }
+});
+
+router.get('/:automationId/logs/recent', requireAdmin, async (req, res) => {
+  try {
+    const { WhatsAppAutomationLogService } = require('./logService');
+    const { limit } = req.query;
+    const logs = WhatsAppAutomationLogService.getRecentLogs(req.params.automationId, limit ? parseInt(limit, 10) : 100);
+    res.json({ logs });
+  } catch (error) {
+    console.error('[WhatsAppAutomation] recent logs error:', error);
+    res.status(500).json({ error: 'Failed to get recent logs' });
+  }
+});
+
+// ============================================
+// AUTO-REPLY RULES API
+// ============================================
+
+router.get('/:automationId/auto-replies', requireAdmin, async (req, res) => {
+  try {
+    const workspaceId = await resolveWorkspaceId(req);
+    const automation = await dbService.prisma.whatsAppAutomation.findFirst({
+      where: { id: req.params.automationId, workspaceId },
+      select: { id: true },
+    });
+    if (!automation) return res.status(404).json({ error: 'Automation not found' });
+    const rules = await dbService.prisma.whatsAppAutoReplyRule.findMany({
+      where: { automationId: req.params.automationId },
+      orderBy: { priority: 'asc' },
+    });
+    res.json({ rules });
+  } catch (error) {
+    if (error.code === 'P2021' || error.message?.includes('does not exist')) {
+      return res.json({ rules: [] });
+    }
+    console.error('[WhatsAppAutomation] auto-replies list error:', error);
+    res.status(500).json({ error: 'Failed to load auto-reply rules' });
+  }
+});
+
+router.post('/:automationId/auto-replies', requireAdmin, async (req, res) => {
+  try {
+    const workspaceId = await resolveWorkspaceId(req);
+    const automation = await dbService.prisma.whatsAppAutomation.findFirst({
+      where: { id: req.params.automationId, workspaceId },
+      select: { id: true },
+    });
+    if (!automation) return res.status(404).json({ error: 'Automation not found' });
+    const body = req.body || {};
+    const { name, triggerType, triggerKey, triggerValue, matchMode, response, responseConfig, responseType, priority, enabled } = body;
+    const responseValue = responseConfig || response;
+    if (!triggerType || !responseValue) {
+      return res.status(400).json({ error: 'triggerType and response are required' });
+    }
+    const rule = await dbService.prisma.whatsAppAutoReplyRule.create({
+      data: {
+        automationId: req.params.automationId,
+        name: name || 'Auto-reply',
+        triggerType,
+        triggerKey: triggerKey || null,
+        triggerValue: triggerValue || null,
+        matchMode: matchMode || 'exact',
+        response: typeof responseValue === 'string' ? responseValue : JSON.stringify(responseValue),
+        responseConfig: typeof responseValue === 'string' ? null : responseValue,
+        responseType: responseType || 'text',
+        priority: priority || 0,
+        enabled: enabled !== false,
+      },
+    });
+    res.status(201).json({ rule });
+  } catch (error) {
+    if (error.code === 'P2021' || error.message?.includes('does not exist')) {
+      return res.status(500).json({ error: 'Auto-reply rules table not found. Please run database migration.' });
+    }
+    if (error.code === 'P2002') {
+      return res.status(409).json({ error: 'Auto-reply rule with this trigger already exists' });
+    }
+    console.error('[WhatsAppAutomation] auto-reply create error:', error);
+    res.status(500).json({ error: error.message || 'Failed to create auto-reply rule' });
+  }
+});
+
+router.put('/:automationId/auto-replies/:ruleId', requireAdmin, async (req, res) => {
+  try {
+    const body = req.body || {};
+    const allowedFields = ['name', 'triggerType', 'triggerKey', 'triggerValue', 'matchMode', 'response', 'responseConfig', 'responseType', 'priority', 'enabled'];
+    const data = Object.fromEntries(
+      allowedFields.filter(f => Object.prototype.hasOwnProperty.call(body, f)).map(f => [f, body[f]])
+    );
+    if (data.response && typeof data.response !== 'string') {
+      data.response = JSON.stringify(data.response);
+    }
+    if (data.responseConfig && typeof data.responseConfig === 'string') {
+      try { data.responseConfig = JSON.parse(data.responseConfig); } catch { data.responseConfig = null; }
+    }
+    const rule = await dbService.prisma.whatsAppAutoReplyRule.updateMany({
+      where: { id: req.params.ruleId, automationId: req.params.automationId, automation: { workspaceId: req.user.workspaceId } },
+      data,
+    });
+    if (!rule.count) return res.status(404).json({ error: 'Auto-reply rule not found' });
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('[WhatsAppAutomation] auto-reply update error:', error);
+    res.status(500).json({ error: error.message || 'Failed to update auto-reply rule' });
+  }
+});
+
+router.delete('/:automationId/auto-replies/:ruleId', requireAdmin, async (req, res) => {
+  try {
+    const result = await dbService.prisma.whatsAppAutoReplyRule.deleteMany({
+      where: { id: req.params.ruleId, automationId: req.params.automationId, automation: { workspaceId: req.user.workspaceId } },
+    });
+    if (!result.count) return res.status(404).json({ error: 'Auto-reply rule not found' });
+    res.status(204).send();
+  } catch (error) {
+    console.error('[WhatsAppAutomation] auto-reply delete error:', error);
+    res.status(500).json({ error: error.message || 'Failed to delete auto-reply rule' });
+  }
+});
+
+// ============================================
+// MESSAGE STATS API
+// ============================================
+
+router.get('/:automationId/stats/messages', requireAdmin, async (req, res) => {
+  try {
+    const { connectionId } = req.query;
+    const where = { automationId: req.params.automationId };
+    if (connectionId) where.connectionId = connectionId;
+
+    const sessions = await dbService.prisma.whatsAppAutomationSession.findMany({
+      where,
+      select: {
+        messagesSent: true,
+        messagesReceived: true,
+        messagesFailed: true,
+        llmCalls: true,
+        toolCalls: true,
+      },
+    });
+
+    const totals = sessions.reduce(
+      (acc, s) => {
+        acc.sent += s.messagesSent || 0;
+        acc.received += s.messagesReceived || 0;
+        acc.failed += s.messagesFailed || 0;
+        acc.llmCalls += s.llmCalls || 0;
+        acc.toolCalls += s.toolCalls || 0;
+        return acc;
+      },
+      { sent: 0, received: 0, failed: 0, llmCalls: 0, toolCalls: 0 }
+    );
+
+    res.json({ stats: totals, sessionCount: sessions.length });
+  } catch (error) {
+    console.error('[WhatsAppAutomation] message stats error:', error);
+    res.status(500).json({ error: 'Failed to get message stats' });
+  }
 });
 
 function scrub(connection) {

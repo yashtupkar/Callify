@@ -3,6 +3,9 @@ const { ToolRegistry } = require('../tools/ToolRegistry');
 const { WhatsAppAutomationChannelAdapter } = require('./channelAdapter');
 const { buildWhatsAppPrompt } = require('./promptBuilder');
 const { store } = require('./sessionStore');
+const { AutoReplyService } = require('./autoReplyService');
+const { WhatsAppAutomationLogService } = require('./logService');
+const { dbService } = require('../services/DatabaseService');
 
 async function getOrCreateSession({ automation, connection, contactWaId, contactJid, provider, profileName }) {
   let entry = store.get(connection.id, contactWaId);
@@ -11,6 +14,7 @@ async function getOrCreateSession({ automation, connection, contactWaId, contact
 
   const adapter = new WhatsAppAutomationChannelAdapter({
     provider, contactWaId, contactJid, businessPhoneNumber: connection.phoneNumber, instanceId: connection.id,
+    automationId: automation.id,
   });
   adapter.contactProfileName = profileName || null;
   const manager = new WhatsAppConversationManager(adapter, automation.providers || null);
@@ -65,7 +69,7 @@ async function getOrCreateSession({ automation, connection, contactWaId, contact
     systemPrompt: buildWhatsAppPrompt(automation, {
       language: automation.language,
       timezone: automation.timezone,
-      toolNames: registry.getAllSchemas()
+      toolNames: registry.getAllSchemas({ includeEndCall: false })
         .map(tool => tool.function?.name)
         .filter(Boolean),
     }, connection.provider),
@@ -83,6 +87,7 @@ async function getOrCreateSession({ automation, connection, contactWaId, contact
   manager.toolExecutor.contactWaId = contactWaId;
   manager.toolExecutor.contactName = adapter.contactProfileName;
   manager.toolExecutor.contactProvider = connection.provider;
+  manager.toolExecutor.connectionId = connection.id;
 
   await manager.start({ ...config, firstMessage: persisted ? '' : config.firstMessage });
   if (persisted) {
@@ -111,6 +116,22 @@ async function handleMessages({ automation, connection, provider, messages }) {
     if (message.from) grouped.set(message.from, [...(grouped.get(message.from) || []), message]);
   }
 
+  // Load auto-reply rules for this automation
+  let autoReplyRules = [];
+  try {
+    autoReplyRules = await dbService.prisma.whatsAppAutoReplyRule.findMany({
+      where: { automationId: automation.id, enabled: true },
+      orderBy: { priority: 'asc' },
+    });
+  } catch (err) {
+    if (err.code === 'P2021' || err.message?.includes('does not exist')) {
+      console.warn('[WhatsAppAutomation] Auto-reply rules table not found, skipping auto-reply');
+    } else {
+      console.error('[WhatsAppAutomation] Failed to load auto-reply rules:', err.message);
+    }
+  }
+  const autoReplyService = new AutoReplyService(autoReplyRules);
+
   for (const [contactWaId, contactMessages] of grouped) {
     const isNewSession = !store.get(connection.id, contactWaId);
     const entry = await getOrCreateSession({
@@ -122,9 +143,43 @@ async function handleMessages({ automation, connection, provider, messages }) {
     for (const [index, message] of contactMessages.entries()) {
       // If this is the first message on a new session that has an initial greeting,
       // record the user's message without generating another AI reply.
-      if (isNewSession && index === 0 && initialMessage) {
+      if (isNewSession && index === 0 && initialMessage && !autoReplyService.hasFirstMessageRule()) {
         const text = message.text || `[User sent a ${message.type || 'message'}]`;
         entry.conversationManager.transcript.push({ role: 'user', content: text });
+        await store.set(connection, automation, contactWaId, entry);
+        continue;
+      }
+
+      // Log incoming message (with graceful fallback if tables don't exist)
+      let log = null;
+      try {
+        log = WhatsAppAutomationLogService.build(automation.id, { connectionId: connection.id, contactWaId });
+        await log.info('message', 'incoming', `Received ${message.type} message`, { messageType: message.type, messageId: message.id });
+      } catch (err) {
+        if (err.code !== 'P2021' && !err.message?.includes('does not exist')) {
+          console.error('[WhatsAppAutomation] Log error:', err.message);
+        }
+        // Create a no-op log object
+        log = { info: async () => {}, warn: async () => {}, error: async () => {}, debug: async () => {} };
+      }
+
+      // Increment received counter
+      await _incrementMessageCounter(connection.id, contactWaId, 'received');
+
+      // Check for auto-reply BEFORE LLM
+      const autoReplyResult = await _checkAutoReply({
+        autoReplyService,
+        message,
+        automation,
+        connection,
+        contactWaId,
+        entry,
+        provider,
+        log,
+        isFirstMessage: isNewSession && index === 0,
+      });
+      
+      if (autoReplyResult.handled) {
         await store.set(connection, automation, contactWaId, entry);
         continue;
       }
@@ -166,6 +221,100 @@ async function handleMessages({ automation, connection, provider, messages }) {
       }
     }
     await store.set(connection, automation, contactWaId, entry);
+  }
+}
+
+async function _checkAutoReply({ autoReplyService, message, automation, connection, contactWaId, entry, provider, log, isFirstMessage = false }) {
+  let triggerType = null;
+  let triggerKey = null;
+  let triggerValue = null;
+  let userText = null;
+
+  if (message.type === 'interactive_response') {
+    if (['button_reply', 'quick_reply'].includes(message.interactionType)) {
+      triggerType = 'button_press';
+      triggerKey = message.id;
+      triggerValue = message.title;
+    } else if (message.interactionType === 'list_reply') {
+      triggerType = 'list_row';
+      triggerKey = message.id;
+      triggerValue = message.title;
+    } else if (message.interactionType === 'flow_reply') {
+      triggerType = 'flow_reply';
+      triggerKey = message.name || 'flow';
+      triggerValue = message.name || 'flow';
+    }
+  } else if (message.type === 'text' || message.type === 'button' || message.type === 'list') {
+    triggerType = 'keyword';
+    triggerKey = 'keyword';
+    userText = (message.text || '').trim().toLowerCase();
+  } else if (message.type === 'flow_reply') {
+    triggerType = 'flow_reply';
+    triggerKey = message.name || 'flow';
+    triggerValue = message.name || 'flow';
+  }
+
+  if (!triggerType && !isFirstMessage) return { handled: false };
+
+  const match = autoReplyService.match({ triggerType, triggerKey, triggerValue, userText, isFirstMessage });
+
+  if (match.matched) {
+    await log.info('auto_reply', 'matched', `Auto-reply triggered: ${match.rule.triggerType}`, {
+      ruleId: match.rule.id,
+      triggerType: match.rule.triggerType,
+      triggerKey: match.rule.triggerKey,
+      responseType: match.response._type,
+    });
+
+    // Send the auto-reply response
+    try {
+      const { pre, response } = await autoReplyService.withAttachment(
+        match.rule,
+        match.response,
+        typeof provider?.sendMessagePayload === 'function',
+        log,
+      );
+      for (const item of pre) await entry.adapter.sendResponse(item);
+      await entry.adapter.sendResponse(response);
+      
+      // Increment sent counter
+      await _incrementMessageCounter(connection.id, contactWaId, 'sent');
+      
+      // Log success
+      await log.info('auto_reply', 'sent', `Auto-reply sent successfully`, {
+        ruleId: match.rule.id,
+        responseType: match.response._type,
+      });
+    } catch (err) {
+      await log.error('auto_reply', 'send_failed', `Failed to send auto-reply`, {
+        ruleId: match.rule.id,
+        error: err.message,
+      });
+      await _incrementMessageCounter(connection.id, contactWaId, 'failed');
+    }
+
+    return { handled: true };
+  }
+
+  return { handled: false };
+}
+
+async function _incrementMessageCounter(connectionId, contactWaId, type) {
+  try {
+    const fieldMap = {
+      sent: 'messagesSent',
+      received: 'messagesReceived',
+      failed: 'messagesFailed',
+    };
+    const field = fieldMap[type];
+    if (!field) return;
+
+    await dbService.prisma.whatsAppAutomationSession.updateMany({
+      where: { connectionId, contactWaId },
+      data: { [field]: { increment: 1 } },
+    });
+  } catch (err) {
+    console.error('[WhatsAppAutomation] Failed to increment message counter:', err.message);
   }
 }
 

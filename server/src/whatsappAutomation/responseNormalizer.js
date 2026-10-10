@@ -437,6 +437,11 @@ function validateTemplateResponse(obj) {
     language = obj.language.code.trim();
   }
 
+  // Warn if user tries to put buttons in template (buttons are pre-defined in Meta dashboard)
+  if (obj.buttons || obj.button) {
+    console.warn('[ResponseNormalizer] Template type does not support dynamic buttons. Use _type: "button" for interactive buttons. Buttons in template are ignored.');
+  }
+
   return {
     _type: 'template',
     name,

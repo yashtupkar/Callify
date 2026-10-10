@@ -72,6 +72,7 @@ class ToolExecutor {
     this.contactWaId     = null;
     this.contactName     = null;
     this.contactProvider = null;
+    this.connectionId    = null;
     
     // Idempotency guards to prevent LLM loops
     this._bookingCreated = false;
@@ -102,6 +103,14 @@ class ToolExecutor {
   async handle(toolName, args, preamble, llmToolCallId, shouldReprompt = true) {
     console.log(`[ToolExecutor] Tool called: ${toolName}`, args);
     this.usageTracker.incrementToolCall();
+
+    // Increment toolCalls counter for WhatsApp sessions
+    if (this.connectionId && this.contactWaId) {
+      dbService.prisma.whatsAppAutomationSession.updateMany({
+        where: { connectionId: this.connectionId, contactWaId: this.contactWaId },
+        data: { toolCalls: { increment: 1 } },
+      }).catch(() => {}); // Fire and forget
+    }
 
     // Send preamble to UI
     if (preamble && preamble.trim()) {

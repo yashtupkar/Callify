@@ -263,10 +263,12 @@ class ToolRegistry {
 
   /**
    * Returns all tool schemas in OpenAI function-call format.
-   * Includes: built-ins + webhooks + customs + end_call (always last).
+   * Includes: built-ins + webhooks + customs + end_call (always last, unless excluded).
+   * @param {object} options
+   * @param {boolean} options.includeEndCall - Whether to include end_call tool (default: true)
    * @returns {object[]}
    */
-  getAllSchemas() {
+  getAllSchemas({ includeEndCall = true } = {}) {
     const schemas = [];
 
     for (const { schema } of this._builtIn.values())  schemas.push(schema);
@@ -278,20 +280,22 @@ class ToolRegistry {
 
     // end_call is always last — appended here so it never accidentally gets
     // listed before action tools (model should complete the task before ending)
-    schemas.push({
-      type: "function",
-      function: {
-        name: "end_call",
-        description: "Ends the conversation. Call this tool when you say goodbye to the caller.",
-        parameters: {
-          type: "object",
-          properties: {},
-          required: [],
-          additionalProperties: false
-        }
-      },
-      fillerKey: 'end_call'
-    });
+    if (includeEndCall) {
+      schemas.push({
+        type: "function",
+        function: {
+          name: "end_call",
+          description: "Ends the conversation. Call this tool when you say goodbye to the caller.",
+          parameters: {
+            type: "object",
+            properties: {},
+            required: [],
+            additionalProperties: false
+          }
+        },
+        fillerKey: 'end_call'
+      });
+    }
 
     return schemas;
   }

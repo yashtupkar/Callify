@@ -3,6 +3,7 @@ const { ToolExecutor } = require('../tools/ToolExecutor');
 const { ToolRegistry } = require('../tools/ToolRegistry');
 const { UsageTracker } = require('../services/UsageTracker');
 const { normalizeWhatsAppResponse, extractPlainText } = require('./responseNormalizer');
+const { dbService } = require('../services/DatabaseService');
 
 /**
  * Text-only conversation runtime for standalone WhatsApp automations.
@@ -12,6 +13,8 @@ class WhatsAppConversationManager {
   constructor(channel, providerConfig = null) {
     this.channel = channel;
     this.llm = createLLM(providerConfig?.llm);
+    // Enable JSON mode for structured WhatsApp responses
+    this.llm.setJsonMode(true);
     this.registry = new ToolRegistry();
     this.transcript = [];
     this.isActive = false;
@@ -117,6 +120,14 @@ class WhatsAppConversationManager {
     }
 
     this.transcript.push(transcriptItem);
+
+    // Increment LLM call counter
+    if (this.channel?.instanceId && this.channel?.contactWaId) {
+      dbService.prisma.whatsAppAutomationSession.updateMany({
+        where: { connectionId: this.channel.instanceId, contactWaId: this.channel.contactWaId },
+        data: { llmCalls: { increment: 1 } },
+      }).catch(() => {}); // Fire and forget
+    }
 
     await this.llm.generateResponse(
       this.getRecentTranscript(),

@@ -14,8 +14,11 @@ import CrmCalendarPage from '@/pages/crm/CrmCalendarPage';
 import CrmAgentsListPage from '@/pages/crm/CrmAgentsListPage';
 import CrmAgentConfigPage from '@/pages/crm/CrmAgentConfigPage';
 import WhatsAppLivePage from '@/pages/WhatsAppLivePage';
-import WhatsAppAutomationsPage from '@/pages/WhatsAppAutomationsPage';
+import WhatsAppAutomationSetupPage from '@/pages/WhatsAppAutomationSetupPage';
 import WhatsAppNumbersPage from '@/pages/WhatsAppNumbersPage';
+import WhatsAppAutomationLogsPage from '@/pages/WhatsAppAutomationLogsPage';
+import WhatsAppAutomationsPage from '@/pages/WhatsAppAutomationsPage';
+import WhatsAppAutomationDetailsPage from '@/pages/WhatsAppAutomationDetailsPage';
 
 function RootRedirect() {
   const { user, isAuthenticated, loading } = useAuth();
@@ -51,8 +54,40 @@ function App() {
             <Route path="/agents" element={<AgentStudioPage />} />
             <Route path="/agents/:agentId" element={<AgentStudioPage />} />
             <Route path="/admin/whatsapp-live" element={<WhatsAppLivePage />} />
-            <Route path="/admin/whatsapp-automations" element={<WhatsAppAutomationsPage />} />
-            <Route path="/admin/whatsapp-numbers" element={<WhatsAppNumbersPage />} />
+            <Route path="/whatsapp" element={<WhatsAppAutomationsPage />} />
+            <Route
+              path="/whatsapp/setup"
+              element={<WhatsAppAutomationSetupPage />}
+            />
+            <Route
+              path="/whatsapp/setup/:automationId"
+              element={<WhatsAppAutomationSetupPage />}
+            />
+            <Route
+              path="/whatsapp/automation/:automationId"
+              element={<WhatsAppAutomationDetailsPage />}
+            />
+        
+            <Route
+              path="/admin/whatsapp-automations/list"
+              element={<Navigate to="/whatsapp" replace />}
+            />
+            <Route
+              path="/admin/whatsapp-automations/new"
+              element={<WhatsAppAutomationSetupPage />}
+            />
+            <Route
+              path="/admin/whatsapp-automations/:automationId/setup"
+              element={<WhatsAppAutomationSetupPage />}
+            />
+            <Route
+              path="/admin/whatsapp-numbers"
+              element={<WhatsAppNumbersPage />}
+            />
+            <Route
+              path="/admin/whatsapp-automations/:automationId/logs"
+              element={<WhatsAppAutomationLogsPage />}
+            />
           </Route>
 
           <Route path="*" element={<Navigate to="/" replace />} />

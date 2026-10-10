@@ -200,7 +200,7 @@ export default function WhatsAppLivePage() {
           )}
           <div className="text-xs text-muted-foreground">
             Configure connections from the <Link to="/admin/whatsapp-numbers" className="text-primary underline">WhatsApp Connections</Link> page.
-            Build and deploy automations from the <Link to="/admin/whatsapp-automations" className="text-primary underline">WhatsApp Automation</Link> page.
+            Build and deploy automations from the <Link to="/whatsapp" className="text-primary underline">WhatsApp Automation</Link> page.
           </div>
         </CardContent>
       </Card>

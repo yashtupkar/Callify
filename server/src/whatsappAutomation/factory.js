@@ -72,17 +72,21 @@ function createWhatsAppAutomationProvider(connection) {
 module.exports = { createWhatsAppAutomationProvider, CloudApiProvider, BaileysProvider };
 
 async function initializeWhatsAppAutomationProviders() {
-  const connections = await dbService.prisma.whatsAppConnection.findMany({
-    where: { enabled: true },
-    include: { automation: { include: { tools: true } } },
-  });
-  for (const connection of connections) {
-    try {
-      createWhatsAppAutomationProvider(connection);
-      console.log(`[WhatsAppAutomation] Initialized ${connection.provider} connection ${connection.id}`);
-    } catch (error) {
-      console.error(`[WhatsAppAutomation] Failed to initialize connection ${connection.id}:`, error.message);
+  try {
+    const connections = await dbService.prisma.whatsAppConnection.findMany({
+      where: { enabled: true },
+      include: { automation: { include: { tools: true } } },
+    });
+    for (const connection of connections) {
+      try {
+        createWhatsAppAutomationProvider(connection);
+        console.log(`[WhatsAppAutomation] Initialized ${connection.provider} connection ${connection.id}`);
+      } catch (error) {
+        console.error(`[WhatsAppAutomation] Failed to initialize connection ${connection.id}:`, error.message);
+      }
     }
+  } catch (err) {
+    console.error('[WhatsAppAutomation] Failed to load connections for initialization:', err.message);
   }
 }
 

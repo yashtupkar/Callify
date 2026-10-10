@@ -8,6 +8,11 @@ class DatabaseService {
     const pool = new Pool({ connectionString });
     const adapter = new PrismaPg(pool);
     this.prisma = new PrismaClient({ adapter });
+    
+    // Test connection
+    this.prisma.$connect().catch(err => {
+      console.error('[DatabaseService] Failed to connect to database:', err.message);
+    });
   }
 
   async saveSession(callSessionData) {

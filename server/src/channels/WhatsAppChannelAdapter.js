@@ -91,7 +91,9 @@ class WhatsAppChannelAdapter extends ChannelAdapter {
         response: text,
         context: {
           ...context,
+          connectionId: this.instanceId,
           contactWaId: this.contactWaId,
+          automationId: this.automationId,
           businessPhoneNumber: this.businessPhoneNumber,
           instanceId: this.instanceId,
         },
@@ -113,7 +115,9 @@ class WhatsAppChannelAdapter extends ChannelAdapter {
         response,
         context: {
           ...context,
+          connectionId: this.instanceId,
           contactWaId: this.contactWaId,
+          automationId: this.automationId,
           businessPhoneNumber: this.businessPhoneNumber,
           instanceId: this.instanceId,
         },

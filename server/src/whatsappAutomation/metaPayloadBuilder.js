@@ -81,7 +81,9 @@ function buildMetaPayload({ recipient, response, context = {} }) {
         },
       };
 
-      if (response.header) {
+      if (response.headerMedia?.url) {
+        interactive.header = { type: response.headerMedia.type, [response.headerMedia.type]: { link: response.headerMedia.url } };
+      } else if (response.header) {
         interactive.header = { type: 'text', text: String(response.header).slice(0, 60) };
       }
       if (response.footer) {
@@ -144,7 +146,9 @@ function buildMetaPayload({ recipient, response, context = {} }) {
         },
       };
 
-      if (response.header) {
+      if (response.headerMedia?.url) {
+        interactive.header = { type: response.headerMedia.type, [response.headerMedia.type]: { link: response.headerMedia.url } };
+      } else if (response.header) {
         interactive.header = { type: 'text', text: String(response.header).slice(0, 60) };
       }
       if (response.footer) {
@@ -297,6 +301,7 @@ function buildMetaPayload({ recipient, response, context = {} }) {
  * Builds template components array from normalized template response and optional config.
  */
 function buildTemplateComponents(response, config) {
+  // If explicit components provided (e.g., for template button URL parameters), use them
   if (Array.isArray(response.components) && response.components.length > 0) {
     return response.components;
   }
