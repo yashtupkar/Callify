@@ -6,6 +6,7 @@
  * over WebSocket so the admin UI can show real-time logs.
  */
 
+const { randomUUID } = require('crypto');
 const { dbService } = require('../services/DatabaseService');
 
 // In-memory ring buffer for fast recent-log retrieval (last 500 entries per automation)
@@ -29,6 +30,7 @@ function getRecentLogs(automationId, limit = 100) {
  */
 async function _write({ automationId, connectionId, contactWaId, sessionId, level = 'info', category = 'system', event, message, metadata }) {
   const entry = {
+    id: randomUUID(),
     automationId,
     connectionId: connectionId || null,
     contactWaId: contactWaId || null,
@@ -63,6 +65,7 @@ async function _write({ automationId, connectionId, contactWaId, sessionId, leve
   try {
     await dbService.prisma.whatsAppAutomationLog.create({
       data: {
+        id: entry.id,
         automationId: entry.automationId,
         connectionId: entry.connectionId,
         contactWaId: entry.contactWaId,

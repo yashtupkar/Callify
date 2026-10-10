@@ -306,7 +306,7 @@ async function _checkAutoReply({ autoReplyService, message, automation, connecti
 
   if (match.matched) {
     const matchedResponseText = getMessageText(match.response?.text || match.response?.body || match.response?.message || match.response?.value || match.response || '');
-    await log.info('auto_reply', 'matched', matchedResponseText || `Auto-reply triggered: ${match.rule.triggerType}`, {
+    await log.info('auto_reply', 'matched', `Auto-reply rule matched: ${match.rule.triggerType}`, {
       ruleId: match.rule.id,
       triggerType: match.rule.triggerType,
       triggerKey: match.rule.triggerKey,
@@ -327,13 +327,6 @@ async function _checkAutoReply({ autoReplyService, message, automation, connecti
       
       // Increment sent counter
       await _incrementMessageCounter(connection.id, contactWaId, 'sent');
-      
-      // Log success
-      await log.info('auto_reply', 'sent', matchedResponseText || 'Auto-reply sent successfully', {
-        ruleId: match.rule.id,
-        responseType: match.response._type,
-        responseValue: matchedResponseText,
-      });
     } catch (err) {
       await log.error('auto_reply', 'send_failed', `Failed to send auto-reply`, {
         ruleId: match.rule.id,
