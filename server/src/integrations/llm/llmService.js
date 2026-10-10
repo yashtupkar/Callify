@@ -45,10 +45,14 @@ class LLMService extends LLMProvider {
    *   appended after the transcript so the model sees it as the freshest instruction.
    *   Used by CallStateManager to inject per-turn phase/context without modifying the
    *   static system prompt.
+   * @param {boolean} allowAbort - When false, skip the abort() call at the start of this
+   *   request. Set to false for WhatsApp sessions where each turn is already serialised
+   *   by a per-session mutex; aborting would silently cancel the very stream we just
+   *   started. Defaults to true for backward compatibility with the voice pipeline.
    */
-  async generateResponse(transcript, tools = [], toolChoice = 'auto', contextInjection = null) {
+  async generateResponse(transcript, tools = [], toolChoice = 'auto', contextInjection = null, allowAbort = true) {
     try {
-      this.abort();
+      if (allowAbort) this.abort();
       this.abortController = new AbortController();
 
       const systemMessage = { role: 'system', content: this.systemPrompt };

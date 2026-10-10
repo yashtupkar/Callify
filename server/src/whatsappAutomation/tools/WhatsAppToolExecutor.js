@@ -17,7 +17,13 @@ class WhatsAppToolExecutor {
     this.sessionId = sessionId;
     this.contactWaId = contactWaId;
     // Conversation context handed to every tool handler.
-    this.context = {};
+    this.context = {
+      transcript,
+      getRecentTranscript,
+      automationId,
+      sessionId,
+      contactWaId,
+    };
   }
 
   resetTurn() { this.rounds = 0; }
@@ -78,10 +84,15 @@ class WhatsAppToolExecutor {
     this.rounds += 1;
     // Stop endless tool loops: after the budget the model must answer in text.
     const exhausted = this.rounds > this.maxRoundsPerTurn;
-    this.llm.generateResponse(
+    // Return the promise so callers can await the full re-prompt chain.
+    // Failing to await this was the primary concurrency bug: overlapping LLM
+    // streams shared the same transcript and abortController.
+    return this.llm.generateResponse(
       this.getRecentTranscript(),
       exhausted ? [] : this.registry.getAllSchemas(),
       exhausted ? 'none' : 'auto',
+      null,   // contextInjection
+      false,  // allowAbort — tool re-prompts are serialised by the awaited handle() chain
     );
   }
 }

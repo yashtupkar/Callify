@@ -43,6 +43,19 @@ function extractJsonFromText(raw) {
   const trimmed = raw.trim();
   if (!trimmed) return null;
 
+  // Split by newline and try to parse the last valid JSON (in case model outputs multiple tool calls as jsonl)
+  const lines = trimmed.split('\n');
+  if (lines.length > 1) {
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const line = lines[i].trim();
+      if (line.startsWith('{') && line.endsWith('}')) {
+        try {
+          return JSON.parse(line);
+        } catch (_) {}
+      }
+    }
+  }
+
   // Direct parse
   if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
     try {

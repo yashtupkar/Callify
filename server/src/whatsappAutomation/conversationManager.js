@@ -22,6 +22,11 @@ class WhatsAppConversationManager {
     this.isHandoff = false;
     this.maxContextMessages = 40;
     this.usageTracker = new UsageTracker();
+    // Serialise concurrent LLM round-trips per session.
+    // A fast second message must wait for the first tool-call chain to fully
+    // settle before starting its own, otherwise the shared transcript and
+    // abortController get corrupted.
+    this._generating = null;
     
     // Create logger for this automation
     this.automationId = channel?.automationId;
@@ -90,6 +95,10 @@ class WhatsAppConversationManager {
         } catch (error) {
           console.error('[WhatsAppConversationManager] Invalid tool arguments:', error.message);
         }
+        // Await the full handle() call including the LLM re-prompt it fires.
+        // Previously handle() fired generateResponse() without returning its
+        // promise, so the listener resolved before the re-prompt stream finished,
+        // leading to overlapping streams and transcript corruption.
         await this.toolExecutor.handle(
           call.name,
           args,
@@ -130,31 +139,49 @@ class WhatsAppConversationManager {
     const content = String(text || '').trim();
     if (!this.isActive || !content) return;
 
-    const transcriptItem = { role: 'user', content };
-    if (messageMeta && messageMeta.interactionType) {
-      transcriptItem.interaction = {
-        type: messageMeta.interactionType,
-        id: messageMeta.id,
-        title: messageMeta.title,
-      };
+    // Serialise concurrent LLM round-trips: wait for any ongoing generation
+    // (including all tool re-prompts) to fully settle before starting a new one.
+    // Without this, a rapid second message can overlap an in-flight tool loop,
+    // corrupting the shared transcript and triggering the abort on the LLM stream.
+    if (this._generating) {
+      try { await this._generating; } catch (_) { /* previous turn's error, ignore */ }
     }
 
-    this.transcript.push(transcriptItem);
-    this.toolExecutor.resetTurn();
+    let resolveGeneration;
+    this._generating = new Promise((resolve) => { resolveGeneration = resolve; });
 
-    // Increment LLM call counter
-    if (this.channel?.instanceId && this.channel?.contactWaId) {
-      dbService.prisma.whatsAppAutomationSession.updateMany({
-        where: { connectionId: this.channel.instanceId, contactWaId: this.channel.contactWaId },
-        data: { llmCalls: { increment: 1 } },
-      }).catch(() => {}); // Fire and forget
+    try {
+      const transcriptItem = { role: 'user', content };
+      if (messageMeta && messageMeta.interactionType) {
+        transcriptItem.interaction = {
+          type: messageMeta.interactionType,
+          id: messageMeta.id,
+          title: messageMeta.title,
+        };
+      }
+
+      this.transcript.push(transcriptItem);
+      this.toolExecutor.resetTurn();
+
+      // Increment LLM call counter
+      if (this.channel?.instanceId && this.channel?.contactWaId) {
+        dbService.prisma.whatsAppAutomationSession.updateMany({
+          where: { connectionId: this.channel.instanceId, contactWaId: this.channel.contactWaId },
+          data: { llmCalls: { increment: 1 } },
+        }).catch(() => {}); // Fire and forget
+      }
+
+      await this.llm.generateResponse(
+        this.getRecentTranscript(),
+        this.registry.getAllSchemas(),
+        'auto',
+        null,    // contextInjection
+        false,   // allowAbort — session is already serialised by _generating guard
+      );
+    } finally {
+      this._generating = null;
+      resolveGeneration();
     }
-
-    await this.llm.generateResponse(
-      this.getRecentTranscript(),
-      this.registry.getAllSchemas(),
-      'auto',
-    );
   }
 
   getRecentTranscript() {
