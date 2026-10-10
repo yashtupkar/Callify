@@ -4,22 +4,13 @@ const { authMiddleware, requireAdmin } = require('../middleware/auth');
 const { createWhatsAppAutomationProvider } = require('./factory');
 const { store } = require('./sessionStore');
 const { encryptConnectionSecrets } = require('./secretBox');
+const { createCrmRouter } = require('./tools/crmRoutes');
+const { BUILT_IN_TOOLS } = require('./tools');
 
 const router = express.Router();
 router.use(authMiddleware);
 
-const BUILT_IN_TOOL_NAMES = [
-  'check_availability',
-  'create_booking',
-  'get_bookings',
-  'cancel_booking',
-  'reschedule_booking',
-  'get_pricing',
-  'save_collected_data',
-  'send_followup_email',
-  'send_whatsapp',
-  'transfer_call',
-];
+const BUILT_IN_TOOL_NAMES = BUILT_IN_TOOLS.map((tool) => tool.name);
 
 function buildToolRows(capabilities = [], suppliedTools = []) {
   const configured = new Map(
@@ -48,7 +39,7 @@ function buildToolRows(capabilities = [], suppliedTools = []) {
         },
       },
       config: tool.config || null,
-      enabled: tool.enabled !== false && (requested.size === 0 || requested.has(name) || configured.has(name)),
+      enabled: tool.enabled !== false && (BUILT_IN_TOOL_NAMES.includes(name) || requested.size === 0 || requested.has(name) || configured.has(name)),
     };
   });
 }
@@ -119,6 +110,8 @@ async function resolveWorkspaceId(req) {
   }) || await dbService.prisma.workspace.findFirst({ select: { id: true } });
   return workspace?.id || null;
 }
+
+router.use('/crm', createCrmRouter(resolveWorkspaceId));
 
 // Every route addressed by :automationId must belong to the caller's workspace.
 // Admins are scoped too: the role grants rights inside a workspace, not across tenants.

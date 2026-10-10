@@ -19,6 +19,7 @@ import WhatsAppNumbersPage from '@/pages/WhatsAppNumbersPage';
 import WhatsAppAutomationLogsPage from '@/pages/WhatsAppAutomationLogsPage';
 import WhatsAppAutomationsPage from '@/pages/WhatsAppAutomationsPage';
 import WhatsAppAutomationDetailsPage from '@/pages/WhatsAppAutomationDetailsPage';
+import WhatsAppCrmPage from '@/pages/WhatsAppCrmPage';
 
 function RootRedirect() {
   const { user, isAuthenticated, loading } = useAuth();
@@ -55,6 +56,7 @@ function App() {
             <Route path="/agents/:agentId" element={<AgentStudioPage />} />
             <Route path="/admin/whatsapp-live" element={<WhatsAppLivePage />} />
             <Route path="/whatsapp" element={<WhatsAppAutomationsPage />} />
+          <Route path="/whatsapp/crm" element={<WhatsAppCrmPage />} />
             <Route
               path="/whatsapp/setup"
               element={<WhatsAppAutomationSetupPage />}

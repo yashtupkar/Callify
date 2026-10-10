@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useId, useMemo, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useState } from "react";
 import axios from "axios";
 import { Plus, Save, X, ShieldCheck, Copy, Check, Phone, AlertCircle, Bot } from "lucide-react";
 import { SERVER_URL } from "@/lib/constants";
@@ -7,16 +7,21 @@ import { useAuth } from "@/hooks/useAuth";
 export const WEBHOOK_URL = `${SERVER_URL}/api/whatsapp-automation/webhook`;
 
 export const toolOptions = [
-  ["check_availability", "Check availability"],
-  ["create_booking", "Create booking"],
-  ["get_bookings", "View bookings"],
-  ["cancel_booking", "Cancel booking"],
-  ["reschedule_booking", "Reschedule booking"],
-  ["get_pricing", "Get pricing"],
-  ["save_collected_data", "Save customer details"],
-  ["send_followup_email", "Send follow-up email"],
-  ["send_whatsapp", "Send WhatsApp message"],
-  ["transfer_call", "Hand off to a person"],
+  ["crm_get_contact", "View customer profile"],
+  ["crm_update_contact", "Save customer details"],
+  ["crm_set_stage", "Move lead stage"],
+  ["crm_update_tags", "Tag customers"],
+  ["crm_add_note", "Add CRM notes"],
+  ["crm_create_task", "Create follow-ups & requests"],
+  ["crm_list_tasks", "List open tasks"],
+  ["crm_complete_task", "Complete tasks"],
+  ["crm_create_deal", "Create deals"],
+  ["crm_update_deal", "Update deals"],
+  ["get_current_datetime", "Current date & time"],
+  ["get_business_hours", "Business hours"],
+  ["search_products", "Search products"],
+  ["search_faq", "Search FAQs"],
+  ["request_human_handoff", "Hand off to a person"],
 ];
 
 export const languages = [

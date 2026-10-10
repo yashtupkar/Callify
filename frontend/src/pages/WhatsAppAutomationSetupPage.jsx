@@ -373,6 +373,8 @@ import { useNavigate, useParams } from "react-router-dom";
 import axios from "axios";
 import { SERVER_URL } from "@/lib/constants";
 import { useAuth } from "@/hooks/useAuth";
+import { toolOptions } from "@/components/whatsapp/automationKit";
+import CustomToolsEditor from "@/components/whatsapp/CustomToolsEditor";
 
 /* ────────────────────────────────────────────────────────────────────────────
    WhatsApp automation setup — Tailwind CSS only (no shadcn / UI kit).
@@ -390,18 +392,6 @@ const steps = [
   ["Review", "Activate"],
 ];
 
-const toolOptions = [
-  ["check_availability", "Check availability"],
-  ["create_booking", "Create booking"],
-  ["get_bookings", "View bookings"],
-  ["cancel_booking", "Cancel booking"],
-  ["reschedule_booking", "Reschedule booking"],
-  ["get_pricing", "Get pricing"],
-  ["save_collected_data", "Save customer details"],
-  ["send_followup_email", "Send follow-up email"],
-  ["send_whatsapp", "Send WhatsApp message"],
-  ["transfer_call", "Human handoff"],
-];
 
 const languages = [
   ["en-US", "English"],
@@ -2693,6 +2683,8 @@ function BehaviorStep({ config, update, bind }) {
           {...bind("fallbackMessage")}
         />
       </div>
+      <H3>Custom tools</H3>
+      <CustomToolsEditor tools={config.tools} onChange={(tools) => update("tools", tools)} />
       <H3>Enabled tools</H3>
       <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
         {toolOptions.map(([name, label]) => {

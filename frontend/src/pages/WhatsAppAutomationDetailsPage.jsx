@@ -32,6 +32,7 @@ import {
   useAutomationsController,
   AutomationModals,
 } from "@/components/whatsapp/automationKit";
+import CustomToolsEditor from "@/components/whatsapp/CustomToolsEditor";
 
 export default function WhatsAppAutomationDetailsPage() {
   const navigate = useNavigate();
@@ -661,6 +662,9 @@ function SettingsTab({ automation, actions }) {
           </Card>
         </div>
         <div>
+          <Card title="Custom tools">
+            <CustomToolsEditor tools={form.tools} onChange={(tools) => set("tools", tools)} />
+          </Card>
           <Card title="Enabled tools">
             <p className="mb-3 text-xs text-zinc-500">
               Only enabled tools are exposed to the WhatsApp LLM.

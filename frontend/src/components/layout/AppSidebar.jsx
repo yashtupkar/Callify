@@ -424,7 +424,8 @@ const ADMIN_NAV = [
     items: [
       { to: "/agents", icon: Bot, label: "Agent Studio", end: true },
       { to: "/crm/agents", icon: Settings2, label: "Agent Settings" },
-      { to: "/whatsapp", icon: MessageCircle, label: "WhatsApp Automation" },
+      { to: "/whatsapp", icon: MessageCircle, label: "WhatsApp Automation", end: true },
+      { to: "/whatsapp/crm", icon: Users, label: "WhatsApp CRM" },
       {
         to: "/admin/whatsapp-numbers",
         icon: PhoneCall,

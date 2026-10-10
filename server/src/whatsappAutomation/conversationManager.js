@@ -1,9 +1,10 @@
 const { createLLM } = require('../integrations/ProviderFactory');
-const { ToolExecutor } = require('../tools/ToolExecutor');
-const { ToolRegistry } = require('../tools/ToolRegistry');
+const { WhatsAppToolRegistry, WhatsAppToolExecutor } = require('./tools');
+const { sanitizeToolPairs } = require('./tools/sanitizeToolPairs');
 const { UsageTracker } = require('../services/UsageTracker');
 const { normalizeWhatsAppResponse, extractPlainText } = require('./responseNormalizer');
 const { dbService } = require('../services/DatabaseService');
+const { WhatsAppAutomationLogService } = require('./logService');
 
 /**
  * Text-only conversation runtime for standalone WhatsApp automations.
@@ -15,22 +16,42 @@ class WhatsAppConversationManager {
     this.llm = createLLM(providerConfig?.llm);
     // Enable JSON mode for structured WhatsApp responses
     this.llm.setJsonMode(true);
-    this.registry = new ToolRegistry();
+    this.registry = new WhatsAppToolRegistry();
     this.transcript = [];
     this.isActive = false;
     this.isHandoff = false;
     this.maxContextMessages = 40;
     this.usageTracker = new UsageTracker();
-    this.toolExecutor = new ToolExecutor({
+    
+    // Create logger for this automation
+    this.automationId = channel?.automationId;
+    this.sessionId = channel?.sessionId;
+    this.contactWaId = channel?.contactWaId;
+    this.logger = this.automationId ? WhatsAppAutomationLogService.build(this.automationId, {
+      sessionId: this.sessionId,
+      contactWaId: this.contactWaId,
+    }) : null;
+
+    this.toolExecutor = new WhatsAppToolExecutor({
       registry: this.registry,
-      tts: null,
       llm: this.llm,
       transcript: this.transcript,
-      sendToClient: this.sendToClient.bind(this),
-      endConversation: this.endConversation.bind(this),
-      usageTracker: this.usageTracker,
       getRecentTranscript: () => this.getRecentTranscript(),
+      onToolEvent: () => {
+        this.usageTracker.incrementToolCall();
+        if (this.channel?.instanceId && this.channel?.contactWaId) {
+          dbService.prisma.whatsAppAutomationSession.updateMany({
+            where: { connectionId: this.channel.instanceId, contactWaId: this.channel.contactWaId },
+            data: { toolCalls: { increment: 1 } },
+          }).catch(() => {});
+        }
+      },
+      logger: this.logger,
+      automationId: this.automationId,
+      sessionId: this.sessionId,
+      contactWaId: this.contactWaId,
     });
+    this.toolExecutor.context.onHandoff = () => this.handoffToHuman();
 
     this.llm.on('llm_reply_complete', async (reply) => {
       const normalized = normalizeWhatsAppResponse(reply);
@@ -68,7 +89,6 @@ class WhatsAppConversationManager {
           args = call.argsStr.trim() ? JSON.parse(call.argsStr) : {};
         } catch (error) {
           console.error('[WhatsAppConversationManager] Invalid tool arguments:', error.message);
-          continue;
         }
         await this.toolExecutor.handle(
           call.name,
@@ -120,6 +140,7 @@ class WhatsAppConversationManager {
     }
 
     this.transcript.push(transcriptItem);
+    this.toolExecutor.resetTurn();
 
     // Increment LLM call counter
     if (this.channel?.instanceId && this.channel?.contactWaId) {
@@ -138,12 +159,36 @@ class WhatsAppConversationManager {
 
   getRecentTranscript() {
     // Return formatted transcript without internal circular objects
-    const list = this.transcript.map((item) => ({
-      role: item.role,
-      content: typeof item.content === 'string' ? item.content : JSON.stringify(item.content),
-    }));
-    if (list.length <= this.maxContextMessages) return list;
-    return list.slice(-this.maxContextMessages);
+    const list = this.transcript.map((item) => {
+      const message = {
+        role: item.role,
+        content: item.content === null || item.content === undefined || typeof item.content === 'string'
+          ? item.content ?? null
+          : JSON.stringify(item.content),
+      };
+      // Tool-call pairs must reach the model intact or providers reject the request.
+      if (item.tool_calls) message.tool_calls = item.tool_calls;
+      if (item.role === 'tool') { message.tool_call_id = item.tool_call_id; message.name = item.name; }
+      return message;
+    });
+    const recent = list.length <= this.maxContextMessages ? list : list.slice(-this.maxContextMessages);
+    return sanitizeToolPairs(recent);
+  }
+
+  setRegistry(registry) {
+    this.registry = registry;
+    this.toolExecutor.registry = registry;
+  }
+
+  async handoffToHuman() {
+    this.isHandoff = true;
+    this.isActive = false;
+    if (this.channel?.instanceId && this.channel?.contactWaId) {
+      await dbService.prisma.whatsAppAutomationSession.updateMany({
+        where: { connectionId: this.channel.instanceId, contactWaId: this.channel.contactWaId },
+        data: { status: 'human_handoff' },
+      }).catch(() => {});
+    }
   }
 
   getAllTools() {

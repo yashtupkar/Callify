@@ -5,13 +5,13 @@ generator client {
 // Standalone WhatsApp automation domain. WhatsAppInstance remains for legacy
 // clients; new automation APIs use these provider-neutral records.
 model WhatsAppAutomation {
-  id                 String   @id @default(uuid())
+  id                 String    @id @default(uuid())
   workspaceId        String
   name               String
   description        String?
-  status             String   @default("draft")
-  language           String?  @default("en-US")
-  supportedLanguages String[] @default([])
+  status             String    @default("draft")
+  language           String?   @default("en-US")
+  supportedLanguages String[]  @default([])
   systemPrompt       String
   initialMessage     String?
   businessName       String?
@@ -20,33 +20,33 @@ model WhatsAppAutomation {
   websiteUrl         String?
   industry           String?
   address            String?
-  timezone           String?  @default("Asia/Kolkata")
-  fallbackMode       String   @default("ai")
+  timezone           String?   @default("Asia/Kolkata")
+  fallbackMode       String    @default("ai")
   fallbackMessage    String?
   handoffMessage     String?
-  handoffKeywords    String[] @default([])
-  tone               String?  @default("friendly")
-  responseLength     String?  @default("balanced")
-  setupStep          Int      @default(1)
-  setupCompleted     Boolean  @default(false)
-  tested             Boolean  @default(false)
+  handoffKeywords    String[]  @default([])
+  tone               String?   @default("friendly")
+  responseLength     String?   @default("balanced")
+  setupStep          Int       @default(1)
+  setupCompleted     Boolean   @default(false)
+  tested             Boolean   @default(false)
   activatedAt        DateTime?
   behaviorConfig     Json?
   capabilities       Json?
   promptConfig       Json?
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
 
-  workspace   Workspace                   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  connections WhatsAppConnection[]
-  tools       WhatsAppAutomationTool[]
-  sessions    WhatsAppAutomationSession[]
-  logs        WhatsAppAutomationLog[]
-  autoReplies WhatsAppAutoReplyRule[]
+  workspace        Workspace                   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  connections      WhatsAppConnection[]
+  tools            WhatsAppAutomationTool[]
+  sessions         WhatsAppAutomationSession[]
+  logs             WhatsAppAutomationLog[]
+  autoReplies      WhatsAppAutoReplyRule[]
   knowledgeSources WhatsAppKnowledgeSource[]
-  products WhatsAppProduct[]
-  faqs WhatsAppFaq[]
-  businessHours WhatsAppBusinessHour[]
+  products         WhatsAppProduct[]
+  faqs             WhatsAppFaq[]
+  businessHours    WhatsAppBusinessHour[]
 
   @@index([workspaceId, status])
 }
@@ -131,8 +131,8 @@ model WhatsAppAutomationSession {
   llmCalls         Int @default(0)
   toolCalls        Int @default(0)
 
-  automation WhatsAppAutomation @relation(fields: [automationId], references: [id], onDelete: Cascade)
-  connection WhatsAppConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  automation WhatsAppAutomation      @relation(fields: [automationId], references: [id], onDelete: Cascade)
+  connection WhatsAppConnection      @relation(fields: [connectionId], references: [id], onDelete: Cascade)
   logs       WhatsAppAutomationLog[]
 
   @@unique([connectionId, contactWaId])
@@ -140,19 +140,19 @@ model WhatsAppAutomationSession {
 }
 
 model WhatsAppAutomationLog {
-  id            String   @id @default(uuid())
-  automationId  String
-  connectionId  String?
-  contactWaId   String?
-  sessionId     String?
-  level         String   @default("info") // info, warn, error, debug
-  category      String   @default("system") // system, message, tool, auto_reply, llm, error, status
-  event         String
-  message       String
-  metadata      Json?
-  createdAt     DateTime @default(now())
+  id           String   @id @default(uuid())
+  automationId String
+  connectionId String?
+  contactWaId  String?
+  sessionId    String?
+  level        String   @default("info") // info, warn, error, debug
+  category     String   @default("system") // system, message, tool, auto_reply, llm, error, status
+  event        String
+  message      String
+  metadata     Json?
+  createdAt    DateTime @default(now())
 
-  automation WhatsAppAutomation @relation(fields: [automationId], references: [id], onDelete: Cascade)
+  automation WhatsAppAutomation         @relation(fields: [automationId], references: [id], onDelete: Cascade)
   session    WhatsAppAutomationSession? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
 
   @@index([automationId, createdAt])
@@ -161,20 +161,20 @@ model WhatsAppAutomationLog {
 }
 
 model WhatsAppAutoReplyRule {
-  id            String   @id @default(uuid())
-  automationId  String
-  name          String   @default("Auto-reply")
-  triggerType   String   // button_press, list_row, keyword, flow_reply, first_message, always
-  triggerKey    String?  // button id, row id, keyword (lowercase), or null for always
-  triggerValue  String?  // exact match value, or null
-  matchMode     String   @default("exact") // exact, contains, regex, prefix
-  response      String   // text or JSON response
+  id             String   @id @default(uuid())
+  automationId   String
+  name           String   @default("Auto-reply")
+  triggerType    String // button_press, list_row, keyword, flow_reply, first_message, always
+  triggerKey     String? // button id, row id, keyword (lowercase), or null for always
+  triggerValue   String? // exact match value, or null
+  matchMode      String   @default("exact") // exact, contains, regex, prefix
+  response       String // text or JSON response
   responseConfig Json?
-  responseType String   @default("text") // text, button, list, media, template
-  priority      Int      @default(0)
-  enabled       Boolean  @default(true)
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  responseType   String   @default("text") // text, button, list, media, template
+  priority       Int      @default(0)
+  enabled        Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
   automation WhatsAppAutomation @relation(fields: [automationId], references: [id], onDelete: Cascade)
 
@@ -183,20 +183,21 @@ model WhatsAppAutoReplyRule {
 }
 
 model WhatsAppKnowledgeSource {
-  id            String   @id @default(uuid())
-  automationId  String
-  type          String
-  title         String
-  content       String?
-  sourceUrl     String?
-  fileName      String?
-  mimeType      String?
-  enabled       Boolean  @default(true)
-  metadata      Json?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id           String   @id @default(uuid())
+  automationId String
+  type         String
+  title        String
+  content      String?
+  sourceUrl    String?
+  fileName     String?
+  mimeType     String?
+  enabled      Boolean  @default(true)
+  metadata     Json?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
   automation WhatsAppAutomation @relation(fields: [automationId], references: [id], onDelete: Cascade)
+
   @@index([automationId, enabled])
 }
 
@@ -214,6 +215,7 @@ model WhatsAppProduct {
   updatedAt    DateTime @updatedAt
 
   automation WhatsAppAutomation @relation(fields: [automationId], references: [id], onDelete: Cascade)
+
   @@index([automationId, enabled])
 }
 
@@ -229,6 +231,7 @@ model WhatsAppFaq {
   updatedAt    DateTime @updatedAt
 
   automation WhatsAppAutomation @relation(fields: [automationId], references: [id], onDelete: Cascade)
+
   @@index([automationId, enabled, priority])
 }
 
@@ -243,6 +246,7 @@ model WhatsAppBusinessHour {
   updatedAt    DateTime @updatedAt
 
   automation WhatsAppAutomation @relation(fields: [automationId], references: [id], onDelete: Cascade)
+
   @@unique([automationId, dayOfWeek])
 }
 

@@ -1,4 +1,4 @@
-﻿// Multi-connection / concurrency harness. Everything external is faked: no database,
+// Multi-connection / concurrency harness. Everything external is faked: no database,
 // no LLM, no WhatsApp network calls, so no real customer can receive a message.
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -32,11 +32,8 @@ const prisma = {
   },
 };
 stub('services/DatabaseService.js', { dbService: { prisma } });
-stub('tools/ToolRegistry.js', {
-  ToolRegistry: class {
-    injectInternalCrmTools() {} remove() {} isBuiltIn() { return true; } injectDataCollectionTool() {}
-    registerWebhook() {} registerCustom() {} getAllSchemas() { return []; }
-  },
+stub('whatsappAutomation/tools/crmService.js', {
+  ensureContact: async () => ({ id: 'crm-1' }), recordMessage: async () => {},
 });
 stub('whatsappAutomation/promptBuilder.js', { buildWhatsAppPrompt: () => 'prompt' });
 stub('whatsappAutomation/channelAdapter.js', {
@@ -46,7 +43,8 @@ stub('whatsappAutomation/channelAdapter.js', {
 });
 stub('whatsappAutomation/conversationManager.js', {
   WhatsAppConversationManager: class {
-    constructor(adapter) { this.adapter = adapter; this.transcript = []; this.toolExecutor = {}; this.isHandoff = false; this.isActive = true; }
+    constructor(adapter) { this.adapter = adapter; this.transcript = []; this.toolExecutor = { context: {} }; this.isHandoff = false; this.isActive = true; }
+    setRegistry() {}
     async start() {}
     async handleUserUtterance(text) {
       const key = `${this.adapter.instanceId}:${this.adapter.contactWaId}`;

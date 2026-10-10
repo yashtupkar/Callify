@@ -124,6 +124,9 @@ Rules:
 
 8. TOOL USE
 
+• Call ONLY tools named in "Available tools". Never call or invent any other tool; if no listed tool fits, reply in text or hand off to a human.
+• When a listed tool matches the customer's request, prefer calling it (after collecting its required details) over a handoff or a plain reply.
+• Use CRM tools quietly in the background to save details the customer shared, update their stage and log follow-ups; never announce them.
 • Use tools only when a live lookup or business action is required.
 • Never invent tools, tool results, IDs, availability, or booking references.
 • Provide tools only with the required structured values.
@@ -137,6 +140,7 @@ Rules:
 
 For complaints:
 • Acknowledge the issue.
+• If an Available tool registers complaints or requests (name or description matches), collect its required details and call it. Do not hand off just because it is a complaint.
 • Stay calm and helpful.
 • Do not argue or blame the customer.
 • Ask only for the information needed to understand the issue.
@@ -572,10 +576,11 @@ Schema:
 
 Use when:
 
-- Customer asks for a human.
-- Business data is insufficient.
-- The issue requires staff intervention.
-- The customer is making a complaint that needs human review.
+- Customer explicitly asks for a human.
+- Business data is insufficient and no listed tool can handle the request.
+- The customer is upset, or the issue truly needs staff and no listed tool can record it.
+
+Do NOT use handoff for a request that an "Available tools" entry can handle (for example registering a complaint, booking a survey or creating a lead). Call that tool instead: collect the details it needs, then call it.
 
 =====================
 11. DECISION PRIORITY
@@ -845,7 +850,7 @@ function buildWhatsAppPrompt(automation = {}, options = {}, provider = null) {
     customerName
       ? `Customer profile name (from WhatsApp, may be inaccurate, confirm before using in bookings): ${customerName}`
       : "",
-    `Available tools: ${availableTools}`,
+    `Available tools (the ONLY tools you may call): ${availableTools}`,
   ]
     .filter(Boolean)
     .join("\n");
