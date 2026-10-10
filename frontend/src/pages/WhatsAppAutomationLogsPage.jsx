@@ -31,20 +31,20 @@ const FILTER_TABS = [
 ];
 
 const LEVEL_STYLES = {
-  info: 'bg-cyan-500/10 text-cyan-300 border-cyan-500/20',
-  warn: 'bg-amber-500/10 text-amber-300 border-amber-500/20',
-  error: 'bg-red-500/10 text-red-300 border-red-500/20',
-  debug: 'bg-slate-500/10 text-slate-300 border-slate-500/20',
+  info: 'bg-zinc-800 text-zinc-200 border-zinc-700',
+  warn: 'bg-zinc-800 text-zinc-200 border-zinc-700',
+  error: 'bg-zinc-800 text-zinc-200 border-zinc-700',
+  debug: 'bg-zinc-800 text-zinc-200 border-zinc-700',
 };
 
 const CATEGORY_STYLE = {
-  message: { label: 'Incoming', badge: 'bg-cyan-500/10 text-cyan-300 border-cyan-500/20', arrow: '↓', arrowBg: 'bg-cyan-500/10 text-cyan-300' },
-  auto_reply: { label: 'Auto-reply', badge: 'bg-emerald-500/10 text-emerald-300 border-emerald-500/20', arrow: '↑', arrowBg: 'bg-emerald-500/10 text-emerald-300' },
-  llm: { label: 'AI', badge: 'bg-violet-500/10 text-violet-300 border-violet-500/20', arrow: '→', arrowBg: 'bg-violet-500/10 text-violet-300' },
-  tool: { label: 'Tool', badge: 'bg-amber-500/10 text-amber-300 border-amber-500/20', arrow: '↗', arrowBg: 'bg-amber-500/10 text-amber-300' },
-  error: { label: 'Error', badge: 'bg-red-500/10 text-red-300 border-red-500/20', arrow: '!', arrowBg: 'bg-red-500/10 text-red-300' },
-  status: { label: 'Status', badge: 'bg-slate-500/10 text-slate-200 border-slate-500/20', arrow: '→', arrowBg: 'bg-slate-500/10 text-slate-300' },
-  default: { label: 'System', badge: 'bg-slate-500/10 text-slate-200 border-slate-500/20', arrow: '→', arrowBg: 'bg-slate-500/10 text-slate-300' },
+  message: { label: 'Incoming', badge: 'bg-zinc-800 text-zinc-200 border-zinc-700', arrow: '↓', arrowBg: 'bg-zinc-800 text-zinc-200' },
+  auto_reply: { label: 'Auto-reply', badge: 'bg-zinc-800 text-zinc-200 border-zinc-700', arrow: '↑', arrowBg: 'bg-zinc-800 text-zinc-200' },
+  llm: { label: 'AI', badge: 'bg-zinc-800 text-zinc-200 border-zinc-700', arrow: '→', arrowBg: 'bg-zinc-800 text-zinc-200' },
+  tool: { label: 'Tool', badge: 'bg-zinc-800 text-zinc-200 border-zinc-700', arrow: '↗', arrowBg: 'bg-zinc-800 text-zinc-200' },
+  error: { label: 'Error', badge: 'bg-zinc-800 text-zinc-200 border-zinc-700', arrow: '!', arrowBg: 'bg-zinc-800 text-zinc-200' },
+  status: { label: 'Status', badge: 'bg-zinc-800 text-zinc-200 border-zinc-700', arrow: '→', arrowBg: 'bg-zinc-800 text-zinc-200' },
+  default: { label: 'System', badge: 'bg-zinc-800 text-zinc-200 border-zinc-700', arrow: '→', arrowBg: 'bg-zinc-800 text-zinc-200' },
 };
 
 const EMPTY_STATS = { total: 0, byCategory: {}, byLevel: {} };
@@ -86,22 +86,22 @@ function getLogTone(log) {
   };
 
   if (log.category === 'message') {
-    base.badge = 'bg-cyan-500/10 text-cyan-300 border-cyan-500/20';
+    base.badge = 'bg-zinc-800 text-zinc-200 border-zinc-700';
     base.arrow = '↓';
   }
 
   if (log.category === 'auto_reply') {
-    base.badge = 'bg-emerald-500/10 text-emerald-300 border-emerald-500/20';
+    base.badge = 'bg-zinc-800 text-zinc-200 border-zinc-700';
     base.arrow = '↑';
   }
 
   if (log.category === 'llm') {
-    base.badge = 'bg-violet-500/10 text-violet-300 border-violet-500/20';
+    base.badge = 'bg-zinc-800 text-zinc-200 border-zinc-700';
     base.arrow = '→';
   }
 
   if (log.category === 'status') {
-    base.badge = 'bg-slate-500/10 text-slate-200 border-slate-500/20';
+    base.badge = 'bg-zinc-800 text-zinc-200 border-zinc-700';
     base.arrow = '→';
   }
 
@@ -208,11 +208,11 @@ export default function WhatsAppAutomationLogsPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#050b12] text-slate-200">
+    <div className="min-h-screen bg-[#050505] text-zinc-200">
       <div className="mx-auto max-w-[1600px] px-4 py-5 lg:px-6">
-        <header className="flex items-center justify-between gap-3 border-b border-slate-800 pb-4">
-          <div className="flex items-center gap-2 text-sm text-slate-200">
-            <span className={cn('h-2.5 w-2.5 rounded-full', autoRefresh ? 'bg-emerald-400 shadow-[0_0_12px_rgba(52,211,153,0.8)]' : 'bg-amber-400 shadow-[0_0_12px_rgba(251,191,36,0.8)]')} />
+        <header className="flex items-center justify-between gap-3 border-b border-zinc-800 pb-4">
+          <div className="flex items-center gap-2 text-sm text-zinc-200">
+            <span className={cn('h-2.5 w-2.5 rounded-full', autoRefresh ? 'bg-zinc-300 shadow-[0_0_12px_rgba(255,255,255,0.35)]' : 'bg-zinc-600 shadow-[0_0_12px_rgba(255,255,255,0.15)]')} />
             <span>{autoRefresh ? 'Automation live — receiving traffic' : 'Automation paused — no live traffic'}</span>
           </div>
 
@@ -220,14 +220,14 @@ export default function WhatsAppAutomationLogsPage() {
             <button
               type="button"
               onClick={() => setAutoRefresh((value) => !value)}
-              className="inline-flex items-center gap-2 rounded-md border border-slate-700 bg-slate-900/70 px-3 py-1.5 text-sm text-slate-200 transition hover:border-slate-500"
+              className="inline-flex items-center gap-2 rounded-md border border-zinc-700 bg-zinc-900/80 px-3 py-1.5 text-sm text-zinc-200 transition hover:border-zinc-500"
             >
               {autoRefresh ? <PauseIcon /> : <PlayIcon />}
               {autoRefresh ? 'Pause stream' : 'Resume stream'}
             </button>
             <button
               type="button"
-              className="inline-flex items-center gap-2 rounded-md border border-slate-700 bg-slate-900/70 px-3 py-1.5 text-sm text-slate-200 transition hover:border-slate-500"
+              className="inline-flex items-center gap-2 rounded-md border border-zinc-700 bg-zinc-900/80 px-3 py-1.5 text-sm text-zinc-200 transition hover:border-zinc-500"
             >
               <CheckCircle className="h-4 w-4" />
               Auto-scroll
@@ -235,13 +235,13 @@ export default function WhatsAppAutomationLogsPage() {
             <button
               type="button"
               onClick={clearLogs}
-              className="rounded-md border border-slate-700 bg-slate-900/70 px-3 py-1.5 text-sm text-slate-200 transition hover:border-slate-500"
+              className="rounded-md border border-zinc-700 bg-zinc-900/80 px-3 py-1.5 text-sm text-zinc-200 transition hover:border-zinc-500"
             >
               Clear
             </button>
             <button
               type="button"
-              className="rounded-md border border-slate-700 bg-slate-900/70 px-3 py-1.5 text-sm text-slate-200 transition hover:border-slate-500"
+              className="rounded-md border border-zinc-700 bg-zinc-900/80 px-3 py-1.5 text-sm text-zinc-200 transition hover:border-zinc-500"
             >
               Export JSON
             </button>
@@ -258,8 +258,8 @@ export default function WhatsAppAutomationLogsPage() {
                 className={cn(
                   'rounded-full border px-3 py-1.5 text-sm transition',
                   activeTab === tab.id
-                    ? 'border-cyan-500/60 bg-cyan-500/15 text-cyan-200 shadow-[0_0_0_1px_rgba(34,211,238,0.15)]'
-                    : 'border-slate-700 bg-slate-900/70 text-slate-300 hover:border-slate-500'
+                    ? 'border-zinc-600 bg-zinc-800 text-zinc-100 shadow-[0_0_0_1px_rgba(161,161,170,0.15)]'
+                    : 'border-zinc-700 bg-zinc-900/70 text-zinc-300 hover:border-zinc-500'
                 )}
               >
                 {tab.label}
@@ -267,23 +267,23 @@ export default function WhatsAppAutomationLogsPage() {
             ))}
           </div>
 
-          <div className="ml-auto flex w-full max-w-md items-center gap-2 rounded-md border border-slate-700 bg-slate-900/60 px-3 py-2 text-sm text-slate-300">
-            <Search className="h-4 w-4 text-slate-500" />
+          <div className="ml-auto flex w-full max-w-md items-center gap-2 rounded-md border border-zinc-700 bg-zinc-900/70 px-3 py-2 text-sm text-zinc-300">
+            <Search className="h-4 w-4 text-zinc-500" />
             <input
               value={searchQuery}
               onChange={(event) => setSearchQuery(event.target.value)}
               placeholder="Search number, text, rule..."
-              className="w-full bg-transparent text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none"
+              className="w-full bg-transparent text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none"
             />
           </div>
         </div>
 
-        <div className="mt-5 overflow-hidden rounded-xl border border-slate-800 bg-[#0a1016] shadow-[0_0_0_1px_rgba(15,23,42,0.8)]">
-          <div className="flex items-center justify-between gap-3 border-b border-slate-800 bg-[#0a1016] px-4 py-3">
-            <div className="text-sm text-slate-300">Simulate a customer message, e.g. price kita hai?</div>
+        <div className="mt-5 overflow-hidden rounded-xl border border-zinc-800 bg-[#09090b] shadow-[0_0_0_1px_rgba(24,24,27,0.8)]">
+          <div className="flex items-center justify-between gap-3 border-b border-zinc-800 bg-[#09090b] px-4 py-3">
+            <div className="text-sm text-zinc-300">Simulate a customer message, e.g. price kita hai?</div>
             <button
               type="button"
-              className="rounded-md bg-cyan-500 px-3 py-2 text-sm font-medium text-slate-950 transition hover:bg-cyan-400"
+              className="rounded-md bg-zinc-200 px-3 py-2 text-sm font-medium text-zinc-950 transition hover:bg-zinc-100"
             >
               Send test webhook
             </button>
@@ -291,12 +291,12 @@ export default function WhatsAppAutomationLogsPage() {
 
           <div className="max-h-[760px] overflow-y-auto">
             {loading && logs.length === 0 ? (
-              <div className="flex min-h-[260px] items-center justify-center text-slate-400">
-                <Loader2 className="h-6 w-6 animate-spin text-cyan-300" />
+              <div className="flex min-h-[260px] items-center justify-center text-zinc-400">
+                <Loader2 className="h-6 w-6 animate-spin text-zinc-300" />
               </div>
             ) : filteredLogs.length === 0 ? (
-              <div className="flex min-h-[220px] flex-col items-center justify-center gap-2 text-slate-400">
-                <Terminal className="h-8 w-8 text-slate-500" />
+              <div className="flex min-h-[220px] flex-col items-center justify-center gap-2 text-zinc-400">
+                <Terminal className="h-8 w-8 text-zinc-500" />
                 <div className="text-sm">No matching logs.</div>
               </div>
             ) : (
@@ -306,13 +306,13 @@ export default function WhatsAppAutomationLogsPage() {
                 const metaText = log.metadata && Object.keys(log.metadata).length ? Object.keys(log.metadata).join(', ') : log.event || log.category;
 
                 return (
-                  <div key={log.id} className="border-b border-slate-800 last:border-b-0">
+                  <div key={log.id} className="border-b border-zinc-800 last:border-b-0">
                     <button
                       type="button"
                       onClick={() => setExpandedLog((value) => value === log.id ? null : log.id)}
-                      className="grid w-full cursor-pointer grid-cols-[118px_150px_1fr_200px] items-center gap-4 px-3 py-2.5 text-left transition hover:bg-slate-800/40"
+                      className="grid w-full cursor-pointer grid-cols-[118px_150px_1fr_200px] items-center gap-4 px-3 py-2.5 text-left transition hover:bg-zinc-800/40"
                     >
-                      <div className="font-mono text-[11px] text-slate-500">{formatLogTime(log.createdAt)}</div>
+                      <div className="font-mono text-[11px] text-zinc-500">{formatLogTime(log.createdAt)}</div>
 
                       <div className="flex items-center gap-2">
                         <span className={cn('inline-flex h-6 w-6 items-center justify-center rounded-md text-xs', tone.arrowBg)}>{tone.arrow}</span>
@@ -321,34 +321,34 @@ export default function WhatsAppAutomationLogsPage() {
                         </span>
                       </div>
 
-                      <div className="min-w-0 pr-4 text-sm text-slate-200">
+                      <div className="min-w-0 pr-4 text-sm text-zinc-200">
                         <span className="line-clamp-2 break-all">{message}</span>
                       </div>
 
-                      <div className="text-right text-[11px] text-slate-500">
+                      <div className="text-right text-[11px] text-zinc-500">
                         {metaText}
                       </div>
                     </button>
 
                     {expandedLog === log.id && (
-                      <div className="border-t border-slate-800 bg-slate-950/40 px-4 py-3 text-xs text-slate-300">
+                      <div className="border-t border-zinc-800 bg-zinc-950/40 px-4 py-3 text-xs text-zinc-300">
                         <div className="grid gap-2 md:grid-cols-3">
                           <div>
-                            <div className="mb-1 text-slate-500">Level</div>
+                            <div className="mb-1 text-zinc-500">Level</div>
                             <div className={cn('inline-flex rounded-full border px-2 py-1 text-[11px] uppercase', LEVEL_STYLES[log.level] || LEVEL_STYLES.info)}>{log.level}</div>
                           </div>
                           <div>
-                            <div className="mb-1 text-slate-500">Category</div>
-                            <div className="text-slate-200">{log.category}</div>
+                            <div className="mb-1 text-zinc-500">Category</div>
+                            <div className="text-zinc-200">{log.category}</div>
                           </div>
                           <div>
-                            <div className="mb-1 text-slate-500">Session</div>
-                            <div className="font-mono text-slate-200">{log.sessionId || 'n/a'}</div>
+                            <div className="mb-1 text-zinc-500">Session</div>
+                            <div className="font-mono text-zinc-200">{log.sessionId || 'n/a'}</div>
                           </div>
                         </div>
 
                         {log.metadata && (
-                          <pre className="mt-3 overflow-x-auto rounded-md border border-slate-800 bg-slate-900/70 p-3 text-[11px] text-slate-300 whitespace-pre-wrap break-all">
+                          <pre className="mt-3 overflow-x-auto rounded-md border border-zinc-800 bg-zinc-900/80 p-3 text-[11px] text-zinc-300 whitespace-pre-wrap break-all">
                             {JSON.stringify(log.metadata, null, 2)}
                           </pre>
                         )}
