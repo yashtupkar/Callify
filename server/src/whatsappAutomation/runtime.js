@@ -161,6 +161,14 @@ async function getOrCreateSession({ automation, connection, contactWaId, contact
 
 // `replay` is set by crash recovery: the messages were already claimed in the inbox.
 async function handleMessages({ automation, connection, provider, messages, replay = false }) {
+  if (!replay) {
+    // STOP/START keywords update the campaign opt-out list; failures never block normal handling
+    try {
+      require('../campaigns').onInboundMessages({ automation, messages }).catch(() => {});
+    } catch (err) {
+      console.error('[WhatsAppAutomation] Campaign opt-out hook failed:', err.message);
+    }
+  }
   const initialMessage = typeof automation.initialMessage === 'string'
     ? automation.initialMessage.trim()
     : '';

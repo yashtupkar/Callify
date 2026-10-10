@@ -326,8 +326,9 @@ class BaileysProvider extends WhatsAppProvider {
 
     try {
       const jid = this.normalizeRecipientJid(to);
-      await this.socket.sendMessage(jid, { text: body });
+      const sent = await this.socket.sendMessage(jid, { text: body });
       console.log(`[BaileysProvider] Sent text to ${jid}`);
+      return sent?.key?.id;
     } catch (error) {
       console.error('[BaileysProvider] Error sending text:', error);
       throw error;

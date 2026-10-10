@@ -70,6 +70,7 @@ model WhatsAppConnection {
   automation WhatsAppAutomation          @relation(fields: [automationId], references: [id], onDelete: Cascade)
   sessions   WhatsAppAutomationSession[]
   inbound    WhatsAppInboundMessage[]
+  campaigns  WhatsAppCampaign[]
 
   @@unique([automationId, phoneNumber])
   @@unique([phoneNumberId])
@@ -261,6 +262,9 @@ model Workspace {
   callSessions        CallSession[]
   whatsAppInstances   WhatsAppInstance[]
   whatsAppAutomations WhatsAppAutomation[]
+  users               User[]
+  whatsAppCampaigns   WhatsAppCampaign[]
+  whatsAppOptOuts     WhatsAppOptOut[]
 }
 
 model Agent {
@@ -411,6 +415,116 @@ model User {
   passwordHash String
   name         String?
   role         UserRole @default(user)
+  workspaceId  String?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
+
+  workspace Workspace? @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
+}
+
+// ---------------------------------------------------------------------------
+// WhatsApp Campaigns (broadcast). Sending reuses the existing WhatsAppConnection
+// providers; these tables only hold campaign state, the per-recipient queue and
+// workspace-level opt-outs. status values are documented in src/campaigns/constants.js.
+// ---------------------------------------------------------------------------
+model WhatsAppCampaign {
+  id                 String    @id @default(uuid())
+  workspaceId        String
+  connectionId       String?
+  createdById        String?
+  idempotencyKey     String?
+  name               String
+  channel            String // cloud_api | baileys
+  status             String    @default("draft") // draft | running | paused | completed | cancelled | failed
+  statusNote         String?
+  templateName       String?
+  templateLanguage   String?
+  templateSnapshot   Json?
+  messageText        String?
+  variableMap        Json?
+  headerMediaUrl     String?
+  defaultCountryCode String?
+  concurrency        Int       @default(2)
+  ratePerMinute      Int       @default(30)
+  maxAttempts        Int       @default(3)
+  dailyLimit         Int?
+  optInConfirmedAt   DateTime?
+  optInConfirmedBy   String?
+  optInSource        String?
+  duplicateCount     Int       @default(0)
+  launchedAt         DateTime?
+  pausedAt           DateTime?
+  completedAt        DateTime?
+  cancelledAt        DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  workspace  Workspace                   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  connection WhatsAppConnection?         @relation(fields: [connectionId], references: [id], onDelete: SetNull)
+  recipients WhatsAppCampaignRecipient[]
+
+  @@unique([workspaceId, idempotencyKey])
+  @@index([workspaceId, createdAt])
+  @@index([status])
+  @@index([connectionId])
+}
+
+model WhatsAppCampaignRecipient {
+  id                String    @id @default(uuid())
+  campaignId        String
+  phone             String? // normalised digits (E.164 without '+'); null when the number was invalid
+  rawPhone          String?
+  name              String?
+  variables         Json?
+  status            String    @default("pending") // pending | queued | sent | delivered | read | failed | skipped
+  skipReason        String?
+  attempts          Int       @default(0)
+  nextAttemptAt     DateTime?
+  lockedBy          String?
+  lockedUntil       DateTime?
+  sendStartedAt     DateTime? // set right before the provider call; a crash after this point means the outcome is unknown
+  providerMessageId String?
+  errorCode         String?
+  errorMessage      String?
+  queuedAt          DateTime?
+  sentAt            DateTime?
+  deliveredAt       DateTime?
+  readAt            DateTime?
+  failedAt          DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  campaign WhatsAppCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@unique([campaignId, phone])
+  @@unique([providerMessageId])
+  @@index([campaignId, status])
+  @@index([status, nextAttemptAt])
+}
+
+// Status webhooks that arrive before the worker has stored the provider message id.
+model WhatsAppCampaignStatusEvent {
+  id                String   @id @default(uuid())
+  connectionId      String
+  providerMessageId String
+  status            String
+  errorCode         String?
+  errorMessage      String?
+  occurredAt        DateTime
+  createdAt         DateTime @default(now())
+
+  @@unique([providerMessageId])
+  @@index([createdAt])
+}
+
+model WhatsAppOptOut {
+  id          String   @id @default(uuid())
+  workspaceId String
+  phone       String
+  source      String   @default("manual") // inbound_keyword | manual
+  createdAt   DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, phone])
 }

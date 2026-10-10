@@ -125,6 +125,11 @@ class WhatsAppAutomationInboundRouter {
  * a message store once message persistence is added.
  */
 async function _processStatusUpdates(statusUpdates, connection) {
+  try {
+    await require('../campaigns').onStatusUpdates(connection, statusUpdates);
+  } catch (err) {
+    console.error('[WhatsAppAutomationInboundRouter] Campaign status hook failed:', err.message);
+  }
   for (const update of statusUpdates) {
     if (update.status === 'failed' && update.errors && update.errors.length > 0) {
       const err = update.errors[0];

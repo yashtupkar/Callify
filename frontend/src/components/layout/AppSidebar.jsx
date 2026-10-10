@@ -396,6 +396,7 @@ import {
   ChevronLeft,
   LogOut,
   MessageCircle,
+  Megaphone,
   Radio,
   Loader2,
   ChevronUp,
@@ -425,6 +426,7 @@ const ADMIN_NAV = [
       { to: "/agents", icon: Bot, label: "Agent Studio", end: true },
       { to: "/crm/agents", icon: Settings2, label: "Agent Settings" },
       { to: "/whatsapp", icon: MessageCircle, label: "WhatsApp Automation" },
+      { to: "/whatsapp/campaigns", icon: Megaphone, label: "Campaigns" },
       {
         to: "/admin/whatsapp-numbers",
         icon: PhoneCall,

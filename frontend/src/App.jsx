@@ -19,6 +19,9 @@ import WhatsAppNumbersPage from '@/pages/WhatsAppNumbersPage';
 import WhatsAppAutomationLogsPage from '@/pages/WhatsAppAutomationLogsPage';
 import WhatsAppAutomationsPage from '@/pages/WhatsAppAutomationsPage';
 import WhatsAppAutomationDetailsPage from '@/pages/WhatsAppAutomationDetailsPage';
+import CampaignsPage from '@/pages/CampaignsPage';
+import CampaignCreatePage from '@/pages/CampaignCreatePage';
+import CampaignDetailsPage from '@/pages/CampaignDetailsPage';
 
 function RootRedirect() {
   const { user, isAuthenticated, loading } = useAuth();
@@ -67,6 +70,9 @@ function App() {
               path="/whatsapp/automation/:automationId"
               element={<WhatsAppAutomationDetailsPage />}
             />
+            <Route path="/whatsapp/campaigns" element={<CampaignsPage />} />
+            <Route path="/whatsapp/campaigns/new" element={<CampaignCreatePage />} />
+            <Route path="/whatsapp/campaigns/:id" element={<CampaignDetailsPage />} />
         
             <Route
               path="/admin/whatsapp-automations/list"

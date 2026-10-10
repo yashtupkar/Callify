@@ -44,6 +44,9 @@ app.use((req, res, next) => {
     next();
   }
 });
+const campaigns = require('./src/campaigns');
+// Mounted before the global 100kb JSON parser: campaign uploads carry parsed spreadsheet rows (own 5mb limit)
+app.use('/api/campaigns', campaigns.buildRouter());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
@@ -128,4 +131,11 @@ server.listen(PORT, () => {
   initializeWhatsAppAutomationProviders().catch(error => {
     console.error('[WhatsAppAutomation] Startup initialization failed:', error);
   });
+  campaigns.startWorker();
 });
+
+for (const signal of ['SIGINT', 'SIGTERM']) {
+  process.once(signal, () => {
+    campaigns.stopWorker().finally(() => process.exit(0));
+  });
+}

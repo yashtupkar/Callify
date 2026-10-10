@@ -401,6 +401,24 @@ class CloudApiProvider extends WhatsAppProvider {
     return this.sendImage(to, urlOrId, caption);
   }
 
+  /** Lists message templates of the connected WhatsApp Business Account (paginated). */
+  async listTemplates() {
+    if (!this.businessId) throw new Error('WhatsApp Business Account ID is not configured for this connection');
+    const templates = [];
+    let after;
+    for (let page = 0; page < 10; page += 1) {
+      const data = await this._get(`/${this.businessId}/message_templates`, {
+        fields: 'name,status,language,category,components,parameter_format',
+        limit: 100,
+        ...(after ? { after } : {}),
+      });
+      templates.push(...(data.data || []));
+      after = data.paging?.cursors?.after;
+      if (!data.paging?.next || !after) break;
+    }
+    return templates;
+  }
+
   async sendTemplate(to, templateName, languageCode = 'en_US', componentsOrParameters = []) {
     let components = undefined;
     if (Array.isArray(componentsOrParameters) && componentsOrParameters.length > 0) {
