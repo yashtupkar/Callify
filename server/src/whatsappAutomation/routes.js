@@ -119,10 +119,39 @@ async function resolveWorkspaceId(req) {
   return workspace?.id || null;
 }
 
+// Every route addressed by :automationId must belong to the caller's workspace.
+// Admins are scoped too: the role grants rights inside a workspace, not across tenants.
+router.param('automationId', async (req, res, next, automationId) => {
+  try {
+    const workspaceId = await resolveWorkspaceId(req);
+    const owned = workspaceId && await dbService.prisma.whatsAppAutomation.findFirst({
+      where: { id: automationId, workspaceId },
+      select: { id: true },
+    });
+    if (!owned) return res.status(404).json({ error: 'Automation not found' });
+    next();
+  } catch (error) {
+    console.error('[WhatsAppAutomation] workspace guard error:', error.message);
+    res.status(500).json({ error: 'Failed to verify automation access' });
+  }
+});
+
+// Webhook routing keys must be globally unique or one tenant could receive another tenant's traffic.
+async function findRoutingConflict(data, excludeConnectionId) {
+  const or = [];
+  if (data.instanceId) or.push({ instanceId: String(data.instanceId) });
+  if (data.phoneNumberId) or.push({ phoneNumberId: String(data.phoneNumberId) });
+  if (!or.length) return null;
+  return dbService.prisma.whatsAppConnection.findFirst({
+    where: { OR: or, ...(excludeConnectionId ? { NOT: { id: excludeConnectionId } } : {}) },
+    select: { id: true },
+  });
+}
+
 router.get('/', async (req, res) => {
   try {
     const workspaceId = await resolveWorkspaceId(req);
-    const where = req.user.role === 'admin' ? {} : { workspaceId };
+    const where = { workspaceId };
     const automations = await dbService.prisma.whatsAppAutomation.findMany({ where, include: { connections: true, tools: true, autoReplies: true } });
     res.json({ automations: automations.map(automation => ({ ...automation, connections: automation.connections.map(scrub) })) });
   } catch (error) {
@@ -254,8 +283,11 @@ router.post('/verify-cloud', requireAdmin, async (req, res) => {
   }
 });
 
-router.get('/sessions', requireAdmin, (req, res) => {
-  res.json({ sessions: store.list().map(({ conversationManager, ...session }) => ({ ...session, messageCount: conversationManager?.transcript?.length || 0 })) });
+router.get('/sessions', requireAdmin, async (req, res) => {
+  const workspaceId = await resolveWorkspaceId(req);
+  const owned = await dbService.prisma.whatsAppAutomation.findMany({ where: { workspaceId }, select: { id: true } });
+  const ids = new Set(owned.map((item) => item.id));
+  res.json({ sessions: store.list().filter((session) => ids.has(session.automationId)).map(({ conversationManager, ...session }) => ({ ...session, messageCount: conversationManager?.transcript?.length || 0 })) });
 });
 
 router.get('/:automationId', async (req, res) => {
@@ -263,7 +295,6 @@ router.get('/:automationId', async (req, res) => {
     const automation = await dbService.prisma.whatsAppAutomation.findFirst({
       where: {
         id: req.params.automationId,
-        ...(req.user.role === 'admin' ? {} : { workspaceId: req.user.workspaceId }),
       },
       include: { connections: true, tools: true, autoReplies: true, products: true, faqs: true, businessHours: true, knowledgeSources: true },
     });
@@ -369,6 +400,10 @@ router.post('/:automationId/connections', requireAdmin, async (req, res) => {
     const automation = await dbService.prisma.whatsAppAutomation.findFirst({ where: { id: req.params.automationId, workspaceId } });
     if (!automation) return res.status(404).json({ error: 'Automation not found' });
 
+    if (await findRoutingConflict(body)) {
+      return res.status(409).json({ error: 'instanceId or phoneNumberId is already used by another connection' });
+    }
+
     const existing = await dbService.prisma.whatsAppConnection.findUnique({
       where: { automationId_phoneNumber: { automationId: automation.id, phoneNumber } },
     });
@@ -438,12 +473,15 @@ router.put('/:automationId/connections/:connectionId', requireAdmin, async (req,
       if (!data.phoneNumber) return res.status(400).json({ error: 'phoneNumber cannot be empty' });
     }
     if (Object.keys(data).length === 0) return res.status(400).json({ error: 'No valid connection fields provided' });
+    if (await findRoutingConflict(data, req.params.connectionId)) {
+      return res.status(409).json({ error: 'instanceId or phoneNumberId is already used by another connection' });
+    }
 
     const connection = await dbService.prisma.whatsAppConnection.updateMany({
       where: {
         id: req.params.connectionId,
         automationId: req.params.automationId,
-        automation: { workspaceId: req.user.workspaceId },
+        automation: { workspaceId: await resolveWorkspaceId(req) },
       },
       data,
     });

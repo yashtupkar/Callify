@@ -24,15 +24,28 @@
 
 const https = require('https');
 const http = require('http');
+const { resolveSafeHost, assertHttpUrl, pinnedLookup } = require('./urlGuard');
+
+const MAX_RESPONSE_BYTES = 256 * 1024;
 
 /**
- * Interpolate {{ENV_VAR}} tokens inside string values using process.env.
- * Allows users to store secret references like {{CAL_API_KEY}} in their config.
+ * Only variables with these prefixes (or listed in WEBHOOK_ENV_ALLOWLIST) may be
+ * referenced from tenant-authored tool config; everything else resolves to ''.
+ */
+function isEnvVarAllowed(name) {
+  if (/^(TOOL_|WEBHOOK_TOOL_)/.test(name)) return true;
+  return (process.env.WEBHOOK_ENV_ALLOWLIST || '')
+    .split(',').map((item) => item.trim()).filter(Boolean).includes(name);
+}
+
+/**
+ * Interpolate {{ENV_VAR}} tokens inside string values using allow-listed process.env entries.
  */
 function interpolateEnvVars(str) {
   if (typeof str !== 'string') return str;
   return str.replace(/\{\{([^}]+)\}\}/g, (_, varName) => {
-    return process.env[varName.trim()] || '';
+    const name = varName.trim();
+    return isEnvVarAllowed(name) ? (process.env[name] || '') : '';
   });
 }
 
@@ -111,6 +124,8 @@ async function executeWebhookTool(toolConfig, args) {
   }
 
   const parsedUrl = new URL(url);
+  assertHttpUrl(parsedUrl);
+  const vettedRecords = await resolveSafeHost(parsedUrl.hostname);
   const isHttps = parsedUrl.protocol === 'https:';
   const requestLib = isHttps ? https : http;
 
@@ -122,8 +137,7 @@ async function executeWebhookTool(toolConfig, args) {
     ...(bodyStr ? { 'Content-Length': Buffer.byteLength(bodyStr) } : {})
   };
 
-  console.log(`[WebhookToolExecutor] ${method} ${url}`);
-  if (bodyStr) console.log(`[WebhookToolExecutor] Body: ${bodyStr.slice(0, 300)}`);
+  console.log(`[WebhookToolExecutor] ${method} ${parsedUrl.origin}${parsedUrl.pathname}`);
 
   return new Promise((resolve, reject) => {
     const options = {
@@ -132,14 +146,23 @@ async function executeWebhookTool(toolConfig, args) {
       path: parsedUrl.pathname + parsedUrl.search,
       method,
       headers,
-      timeout: 10000 // 10s max — voice calls need fast responses
+      lookup: pinnedLookup(vettedRecords),
+      timeout: 10000
     };
 
     const req = requestLib.request(options, (res) => {
       let data = '';
-      res.on('data', chunk => { data += chunk; });
+      let size = 0;
+      res.on('data', chunk => {
+        size += chunk.length;
+        if (size > MAX_RESPONSE_BYTES) {
+          req.destroy(new Error('Webhook response too large'));
+          return;
+        }
+        data += chunk;
+      });
       res.on('end', () => {
-        console.log(`[WebhookToolExecutor] Response ${res.statusCode}: ${data.slice(0, 200)}`);
+        console.log(`[WebhookToolExecutor] Response ${res.statusCode}`);
 
         if (res.statusCode >= 400) {
           resolve({

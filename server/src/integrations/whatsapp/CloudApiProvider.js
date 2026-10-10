@@ -51,12 +51,15 @@ class CloudApiProvider extends WhatsAppProvider {
   }
 
   verifyInbound(req) {
-    if (!this.appSecret) return true; // dev mode
+    if (!this.appSecret) {
+      // Fail closed in production; unsigned webhooks are only tolerated in development
+      return process.env.NODE_ENV !== 'production';
+    }
     const sigHeader = req.headers['x-hub-signature-256'];
-    if (!sigHeader) return false;
+    if (!sigHeader || !req.rawBody) return false;
     const expected = 'sha256=' + crypto
       .createHmac('sha256', this.appSecret)
-      .update(req.rawBody || JSON.stringify(req.body || {}))
+      .update(req.rawBody)
       .digest('hex');
     try {
       return crypto.timingSafeEqual(Buffer.from(sigHeader), Buffer.from(expected));
@@ -250,15 +253,31 @@ class CloudApiProvider extends WhatsAppProvider {
     return String(to || '').replace(/@.*$/, '').replace(/[^\d]/g, '');
   }
 
+  // Retries only when Meta answered 429/5xx (message was not accepted), never on timeouts, to avoid double sends
+  async _withRetry(fn, { attempts = 3, baseDelayMs = 500 } = {}) {
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        return await fn();
+      } catch (err) {
+        const status = err.response?.status;
+        const retriable = [429, 502, 503, 504].includes(status);
+        if (!retriable || attempt >= attempts) throw err;
+        const retryAfter = Number(err.response?.headers?.['retry-after']);
+        const delay = retryAfter > 0 ? Math.min(retryAfter * 1000, 10000) : baseDelayMs * 2 ** (attempt - 1);
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
+    }
+  }
+
   async _post(path, payload) {
     try {
-      const res = await axios.post(`${this.graphBase}${path}`, payload, {
+      const res = await this._withRetry(() => axios.post(`${this.graphBase}${path}`, payload, {
         headers: {
           Authorization: `Bearer ${this.apiToken}`,
           'Content-Type': 'application/json',
         },
         timeout: 30000,
-      });
+      }));
       return res.data;
     } catch (err) {
       const metaError = err.response?.data?.error;

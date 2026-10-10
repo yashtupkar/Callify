@@ -1,6 +1,9 @@
 const jwt = require('jsonwebtoken');
 const { dbService } = require('../services/DatabaseService');
 
+if (process.env.NODE_ENV === 'production' && !process.env.JWT_SECRET) {
+  throw new Error('JWT_SECRET must be set in production');
+}
 const JWT_SECRET = process.env.JWT_SECRET || 'callify-dev-secret-change-me';
 const JWT_EXPIRES_IN = '7d';
 
@@ -16,7 +19,7 @@ function setAuthCookie(res, token) {
   res.cookie('callify_token', token, {
     httpOnly: true,
     sameSite: 'lax',
-    secure: false,
+    secure: process.env.NODE_ENV === 'production',
     maxAge: 7 * 24 * 60 * 60 * 1000,
   });
 }

@@ -30,6 +30,12 @@ class BaileysProvider extends WhatsAppProvider {
   }
 
   async initialize() {
+    this.reconnectTimer = null;
+    // Drop the previous socket so listeners from an earlier connection cannot deliver duplicates
+    if (this.socket) {
+      try { this.socket.ev.removeAllListeners(); this.socket.end(undefined); } catch (e) { /* already closed */ }
+      this.socket = null;
+    }
     try {
       // Ensure auth directory exists
       if (!fs.existsSync(this.authPath)) {
@@ -68,8 +74,12 @@ class BaileysProvider extends WhatsAppProvider {
           this.onConnectionUpdate({ status: 'disconnected', shouldReconnect });
 
           if (shouldReconnect) {
-            console.log(`[BaileysProvider] Connection closed, reconnecting...`);
-            setTimeout(() => this.initialize(), 5000);
+            this.reconnectAttempts = (this.reconnectAttempts || 0) + 1;
+            const delay = Math.min(5000 * 2 ** Math.min(this.reconnectAttempts - 1, 5), 120000);
+            console.log(`[BaileysProvider] Connection closed, reconnecting in ${delay}ms...`);
+            if (!this.reconnectTimer) {
+              this.reconnectTimer = setTimeout(() => this.initialize(), delay);
+            }
           } else {
             console.log(`[BaileysProvider] Connection closed permanently (logged out)`);
             // Clean up auth files
@@ -79,6 +89,7 @@ class BaileysProvider extends WhatsAppProvider {
 
         if (connection === 'open') {
           this.connectionStatus = 'connected';
+          this.reconnectAttempts = 0;
           this.phoneNumber = this.socket.user.id.split(':')[0];
           this.onConnectionUpdate({ status: 'connected', phoneNumber: this.phoneNumber });
           console.log(`[BaileysProvider] Connected as ${this.phoneNumber}`);
@@ -95,7 +106,10 @@ class BaileysProvider extends WhatsAppProvider {
             // Let the parseMessage handle fromMe for polls
             const normalized = this.parseMessage(msg);
             if (normalized) {
-              await this.onMessage(normalized);
+              // Not awaited: a slow LLM turn must not stall the socket event loop for other contacts
+              Promise.resolve(this.onMessage(normalized)).catch((err) => {
+                console.error('[BaileysProvider] onMessage failed:', err.message);
+              });
             }
           }
         }
@@ -404,6 +418,7 @@ class BaileysProvider extends WhatsAppProvider {
   }
 
   async disconnect() {
+    if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
     if (this.socket) {
       try {
         await this.socket.logout();

@@ -1,9 +1,23 @@
 const { dbService } = require('../services/DatabaseService');
 
 class WhatsAppAutomationSessionStore {
-  constructor({ ttlMs = 24 * 60 * 60 * 1000 } = {}) {
+  constructor({ ttlMs = 24 * 60 * 60 * 1000, maxSessions = 5000, sweepMs = 10 * 60 * 1000 } = {}) {
     this.ttlMs = ttlMs;
+    this.maxSessions = maxSessions;
     this.sessions = new Map();
+    if (sweepMs > 0) {
+      this.sweepTimer = setInterval(() => this.sweep(), sweepMs);
+      if (this.sweepTimer.unref) this.sweepTimer.unref();
+    }
+  }
+  sweep(now = Date.now()) {
+    for (const [key, value] of this.sessions) {
+      if (now - value.lastActivityAt > this.ttlMs) this.sessions.delete(key);
+    }
+    // Map keeps insertion order, so the oldest entries go first; DB copy stays for reload
+    while (this.sessions.size > this.maxSessions) {
+      this.sessions.delete(this.sessions.keys().next().value);
+    }
   }
   key(connectionId, contactWaId) { return `${connectionId}:${contactWaId}`; }
   get(connectionId, contactWaId) {

@@ -6,6 +6,15 @@ const { store } = require('./sessionStore');
 const { AutoReplyService } = require('./autoReplyService');
 const { WhatsAppAutomationLogService } = require('./logService');
 const { dbService } = require('../services/DatabaseService');
+const { KeyedMutex, mapLimit, TtlDedup, RateLimiter } = require('./concurrency');
+
+const sessionMutex = new KeyedMutex();
+const processedMessages = new TtlDedup({ ttlMs: 10 * 60 * 1000 });
+const inboundLimiter = new RateLimiter({
+  limit: Number(process.env.WHATSAPP_CONTACT_RATE_LIMIT || 30),
+  windowMs: Number(process.env.WHATSAPP_CONTACT_RATE_WINDOW_MS || 60000),
+});
+const CONTACT_CONCURRENCY = Number(process.env.WHATSAPP_CONTACT_CONCURRENCY || 10);
 
 function getMessageText(value) {
   if (typeof value === 'string') return value.trim();
@@ -154,6 +163,9 @@ async function handleMessages({ automation, connection, provider, messages }) {
     : '';
   const grouped = new Map();
   for (const message of messages || []) {
+    // Meta retries unacknowledged webhooks; drop messages that were already handled
+    const dedupId = message.providerMessageId || message.wamid;
+    if (dedupId && processedMessages.seen(`${connection.id}:${dedupId}`)) continue;
     if (message.from) grouped.set(message.from, [...(grouped.get(message.from) || []), message]);
   }
 
@@ -173,7 +185,11 @@ async function handleMessages({ automation, connection, provider, messages }) {
   }
   const autoReplyService = new AutoReplyService(autoReplyRules);
 
-  for (const [contactWaId, contactMessages] of grouped) {
+  const processContact = ([contactWaId, contactMessages]) => sessionMutex.run(`${connection.id}:${contactWaId}`, async () => {
+    if (!inboundLimiter.allow(`${connection.id}:${contactWaId}`)) {
+      console.warn('[WhatsAppAutomation] Inbound rate limit exceeded, dropping messages', { connectionId: connection.id, count: contactMessages.length });
+      return;
+    }
     const isNewSession = !store.get(connection.id, contactWaId);
     const entry = await getOrCreateSession({
       automation, connection, contactWaId, provider,
@@ -267,6 +283,11 @@ async function handleMessages({ automation, connection, provider, messages }) {
       }
     }
     await store.set(connection, automation, contactWaId, entry);
+  });
+
+  const results = await mapLimit([...grouped], CONTACT_CONCURRENCY, processContact);
+  for (const result of results) {
+    if (result.status === 'rejected') console.error('[WhatsAppAutomation] Contact processing failed:', result.reason?.message);
   }
 }
 

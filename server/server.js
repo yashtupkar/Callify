@@ -8,15 +8,33 @@ const { setupConnectionHandler } = require('./src/socket/connectionHandler');
 const { setupTelnyxConnectionHandler } = require('./src/socket/telnyxConnectionHandler');
 const { setupBaileysSocketHandler } = require('./src/socket/baileysSocket');
 const { routes: whatsappAutomationRouter, WhatsAppAutomationInboundRouter, initializeWhatsAppAutomationProviders } = require('./src/whatsappAutomation');
+const { RateLimiter } = require('./src/whatsappAutomation/concurrency');
 const app = express();
-app.use(cors({ origin: true, credentials: true }));
+// CORS_ORIGINS=https://app.example.com,https://admin.example.com restricts browser origins; unset reflects any origin (dev only)
+const allowedOrigins = (process.env.CORS_ORIGINS || '').split(',').map((o) => o.trim()).filter(Boolean);
+app.use(cors({ origin: allowedOrigins.length ? allowedOrigins : true, credentials: true }));
+
+const webhookLimiter = new RateLimiter({
+  limit: Number(process.env.WEBHOOK_RATE_LIMIT || 600),
+  windowMs: Number(process.env.WEBHOOK_RATE_WINDOW_MS || 60000),
+});
+const MAX_WEBHOOK_BODY_BYTES = 1024 * 1024;
 
 // Capture raw body for Meta signature verification on the WhatsApp webhook (POST only)
 app.use((req, res, next) => {
   if ((req.path.startsWith('/api/whatsapp-automation/webhook') || req.path.startsWith('/api/whatsapp/webhook')) && req.method === 'POST') {
+    if (!webhookLimiter.allow(req.ip)) return res.status(429).send('Too many requests');
     let data = '';
+    let size = 0;
     req.setEncoding('utf8');
-    req.on('data', chunk => { data += chunk; });
+    req.on('data', chunk => {
+      size += Buffer.byteLength(chunk);
+      if (size > MAX_WEBHOOK_BODY_BYTES) {
+        req.destroy();
+        return;
+      }
+      data += chunk;
+    });
     req.on('end', () => {
       req.rawBody = data;
       try { req.body = data ? JSON.parse(data) : {}; } catch (e) { req.body = {}; }
