@@ -128,18 +128,20 @@ async function sendWhatsAppResponse({ provider, recipient, response, context = {
     }
   }
 
-  // Log outgoing message
+  // Log outgoing message with the actual payload content
   if (context?.automationId) {
     try {
+      const outgoingMessage = extractPlainText(normalized) || normalized?.text || normalized?.body || normalized?.message || `Sent ${normalized._type} message`;
       const log = WhatsAppAutomationLogService.build(context.automationId, {
         connectionId: context.connectionId,
         contactWaId: context.contactWaId,
       });
-      await log.info('message', 'outgoing', `Sent ${normalized._type} message`, {
+      await log.info('message', 'outgoing', outgoingMessage, {
         messageType: normalized._type,
         recipient: maskPhoneNumber(recipient),
         success: result?.success || false,
         error: result?.error,
+        rawValue: outgoingMessage,
       });
     } catch (err) {
       if (err.code !== 'P2021' && !err.message?.includes('does not exist')) {

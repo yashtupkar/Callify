@@ -7,6 +7,47 @@ const { AutoReplyService } = require('./autoReplyService');
 const { WhatsAppAutomationLogService } = require('./logService');
 const { dbService } = require('../services/DatabaseService');
 
+function getMessageText(value) {
+  if (typeof value === 'string') return value.trim();
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if (value == null) return '';
+  if (Array.isArray(value)) {
+    return value.map((item) => getMessageText(item)).filter(Boolean).join(' ');
+  }
+  if (typeof value === 'object') {
+    if (typeof value.text === 'string' && value.text.trim()) return value.text.trim();
+    if (typeof value.body === 'string' && value.body.trim()) return value.body.trim();
+    if (typeof value.caption === 'string' && value.caption.trim()) return value.caption.trim();
+    if (typeof value.message === 'string' && value.message.trim()) return value.message.trim();
+    if (typeof value.title === 'string' && value.title.trim()) return value.title.trim();
+    if (typeof value.value === 'string' && value.value.trim()) return value.value.trim();
+    if (typeof value.content === 'string' && value.content.trim()) return value.content.trim();
+    return JSON.stringify(value);
+  }
+  return String(value);
+}
+
+function getIncomingLogMessage(message) {
+  if (!message) return '';
+  if (message.type === 'interactive_response') {
+    return getMessageText(message.title || message.text || message.body || message.value || message.id || message);
+  }
+  if (message.type === 'location') {
+    const locationText = [
+      message.location?.name,
+      message.location?.address,
+      message.location?.latitude !== undefined && message.location?.longitude !== undefined
+        ? `Coordinates: ${message.location.latitude}, ${message.location.longitude}`
+        : null,
+    ].filter(Boolean).join(' | ');
+    return locationText || getMessageText(message);
+  }
+  if (['image', 'video', 'audio', 'document'].includes(message.type)) {
+    return getMessageText(message.media?.caption || message.caption || message);
+  }
+  return getMessageText(message.text || message.body || message.value || message.title || message.message || message);
+}
+
 async function getOrCreateSession({ automation, connection, contactWaId, contactJid, provider, profileName }) {
   let entry = store.get(connection.id, contactWaId);
   if (entry) { store.touch(connection.id, contactWaId); return entry; }
@@ -153,8 +194,13 @@ async function handleMessages({ automation, connection, provider, messages }) {
       // Log incoming message (with graceful fallback if tables don't exist)
       let log = null;
       try {
+        const inboundMessage = getIncomingLogMessage(message);
         log = WhatsAppAutomationLogService.build(automation.id, { connectionId: connection.id, contactWaId });
-        await log.info('message', 'incoming', `Received ${message.type} message`, { messageType: message.type, messageId: message.id });
+        await log.info('message', 'incoming', inboundMessage || `Received ${message.type} message`, {
+          messageType: message.type,
+          messageId: message.id,
+          rawValue: inboundMessage,
+        });
       } catch (err) {
         if (err.code !== 'P2021' && !err.message?.includes('does not exist')) {
           console.error('[WhatsAppAutomation] Log error:', err.message);
@@ -259,11 +305,13 @@ async function _checkAutoReply({ autoReplyService, message, automation, connecti
   const match = autoReplyService.match({ triggerType, triggerKey, triggerValue, userText, isFirstMessage });
 
   if (match.matched) {
-    await log.info('auto_reply', 'matched', `Auto-reply triggered: ${match.rule.triggerType}`, {
+    const matchedResponseText = getMessageText(match.response?.text || match.response?.body || match.response?.message || match.response?.value || match.response || '');
+    await log.info('auto_reply', 'matched', matchedResponseText || `Auto-reply triggered: ${match.rule.triggerType}`, {
       ruleId: match.rule.id,
       triggerType: match.rule.triggerType,
       triggerKey: match.rule.triggerKey,
       responseType: match.response._type,
+      responseValue: matchedResponseText,
     });
 
     // Send the auto-reply response
@@ -281,9 +329,10 @@ async function _checkAutoReply({ autoReplyService, message, automation, connecti
       await _incrementMessageCounter(connection.id, contactWaId, 'sent');
       
       // Log success
-      await log.info('auto_reply', 'sent', `Auto-reply sent successfully`, {
+      await log.info('auto_reply', 'sent', matchedResponseText || 'Auto-reply sent successfully', {
         ruleId: match.rule.id,
         responseType: match.response._type,
+        responseValue: matchedResponseText,
       });
     } catch (err) {
       await log.error('auto_reply', 'send_failed', `Failed to send auto-reply`, {
