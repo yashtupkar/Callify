@@ -3,6 +3,7 @@ const { dbService } = require('../services/DatabaseService');
 const { authMiddleware, requireAdmin } = require('../middleware/auth');
 const { createWhatsAppAutomationProvider } = require('./factory');
 const { store } = require('./sessionStore');
+const { encryptConnectionSecrets } = require('./secretBox');
 
 const router = express.Router();
 router.use(authMiddleware);
@@ -421,9 +422,8 @@ router.post('/:automationId/connections', requireAdmin, async (req, res) => {
         phoneNumberId: body.phoneNumberId || null,
         businessId: body.businessId || null,
         instanceId: body.instanceId || null,
-        apiToken: body.apiToken || null,
+        ...encryptConnectionSecrets({ apiToken: body.apiToken || null, appSecret: body.appSecret || null }),
         verifyToken: body.verifyToken || null,
-        appSecret: body.appSecret || null,
         credentials: body.credentials || null,
         automationId: automation.id,
       },
@@ -459,11 +459,12 @@ router.put('/:automationId/connections/:connectionId', requireAdmin, async (req,
       'credentials',
       'enabled',
     ];
-    const data = Object.fromEntries(
+    // '***' is the masked placeholder returned by scrub(); never persist it over a real secret
+    const data = encryptConnectionSecrets(Object.fromEntries(
       allowedFields
-        .filter((field) => Object.prototype.hasOwnProperty.call(body, field))
+        .filter((field) => Object.prototype.hasOwnProperty.call(body, field) && body[field] !== '***')
         .map((field) => [field, body[field]])
-    );
+    ));
 
     if (data.provider && !['baileys', 'cloud_api', 'meta_cloud', 'meta'].includes(data.provider)) {
       return res.status(400).json({ error: 'Unsupported provider' });

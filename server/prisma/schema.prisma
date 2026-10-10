@@ -69,9 +69,32 @@ model WhatsAppConnection {
 
   automation WhatsAppAutomation          @relation(fields: [automationId], references: [id], onDelete: Cascade)
   sessions   WhatsAppAutomationSession[]
+  inbound    WhatsAppInboundMessage[]
 
   @@unique([automationId, phoneNumber])
+  @@unique([phoneNumberId])
+  @@unique([instanceId])
   @@index([provider, enabled])
+}
+
+// Durable inbox: one row per provider message. The unique key gives cross-instance and
+// cross-restart webhook dedup, and 'pending' rows are replayed after a crash.
+model WhatsAppInboundMessage {
+  id                String   @id @default(uuid())
+  connectionId      String
+  providerMessageId String
+  contactWaId       String
+  status            String   @default("pending") // pending | done | failed | dropped
+  attempts          Int      @default(0)
+  payload           Json
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  connection WhatsAppConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  @@unique([connectionId, providerMessageId])
+  @@index([status, updatedAt])
+  @@index([connectionId, contactWaId, createdAt])
 }
 
 model WhatsAppAutomationTool {

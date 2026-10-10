@@ -3,10 +3,14 @@ const { BaileysProvider } = require('../integrations/whatsapp/baileysProvider');
 const { dbService } = require('../services/DatabaseService');
 const { handleMessages } = require('./runtime');
 const { baileysInstanceManager } = require('../services/BaileysInstanceManager');
+const { decryptConnectionSecrets } = require('./secretBox');
+const inbox = require('./inbox');
 
 const activeBaileys = new Map();
 
-function createWhatsAppAutomationProvider(connection) {
+function createWhatsAppAutomationProvider(storedConnection) {
+  // Secrets are encrypted at rest; decrypt only in memory for provider construction
+  const connection = decryptConnectionSecrets(storedConnection);
   const provider = String(connection.provider || '').toLowerCase();
   if (provider === 'cloud_api' || provider === 'meta_cloud' || provider === 'meta') {
     return new CloudApiProvider({
@@ -77,10 +81,10 @@ async function initializeWhatsAppAutomationProviders() {
       where: { enabled: true },
       include: { automation: { include: { tools: true } } },
     });
+    startInboxRecovery();
     for (const connection of connections) {
       try {
         createWhatsAppAutomationProvider(connection);
-        console.log(`[WhatsAppAutomation] Initialized ${connection.provider} connection ${connection.id}`);
       } catch (error) {
         console.error(`[WhatsAppAutomation] Failed to initialize connection ${connection.id}:`, error.message);
       }
@@ -91,3 +95,33 @@ async function initializeWhatsAppAutomationProviders() {
 }
 
 module.exports.initializeWhatsAppAutomationProviders = initializeWhatsAppAutomationProviders;
+
+async function replayInboxMessages({ connectionId, messages }) {
+  const connection = await dbService.prisma.whatsAppConnection.findUnique({
+    where: { id: connectionId },
+    include: { automation: { include: { tools: true } } },
+  });
+  if (!connection?.enabled || connection.automation?.status === 'paused') return;
+  const provider = createWhatsAppAutomationProvider(connection);
+  await handleMessages({ automation: connection.automation, connection, provider, messages, replay: true });
+}
+
+/** Replays messages left pending by a crash and trims old inbox rows. */
+function startInboxRecovery({ intervalMs = 60000 } = {}) {
+  const tick = async () => {
+    try {
+      const replayed = await inbox.recoverPending(replayInboxMessages);
+      if (replayed) console.log(`[WhatsAppAutomation] Replayed ${replayed} pending inbound message(s)`);
+      await inbox.purge();
+    } catch (err) {
+      if (err.code !== 'P2021') console.error('[WhatsAppAutomation] Inbox recovery failed:', err.message);
+    }
+  };
+  setTimeout(tick, 5000).unref();
+  const timer = setInterval(tick, intervalMs);
+  timer.unref();
+  return timer;
+}
+
+module.exports.startInboxRecovery = startInboxRecovery;
+module.exports.replayInboxMessages = replayInboxMessages;

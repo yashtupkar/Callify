@@ -8,6 +8,8 @@ const { WhatsAppAutomationLogService } = require('./logService');
 const { dbService } = require('../services/DatabaseService');
 const { KeyedMutex, mapLimit, TtlDedup, RateLimiter } = require('./concurrency');
 
+const inbox = require('./inbox');
+
 const sessionMutex = new KeyedMutex();
 const processedMessages = new TtlDedup({ ttlMs: 10 * 60 * 1000 });
 const inboundLimiter = new RateLimiter({
@@ -157,15 +159,29 @@ async function getOrCreateSession({ automation, connection, contactWaId, contact
   return entry;
 }
 
-async function handleMessages({ automation, connection, provider, messages }) {
+// `replay` is set by crash recovery: the messages were already claimed in the inbox.
+async function handleMessages({ automation, connection, provider, messages, replay = false }) {
   const initialMessage = typeof automation.initialMessage === 'string'
     ? automation.initialMessage.trim()
     : '';
   const grouped = new Map();
+  let inboxAvailable = true;
   for (const message of messages || []) {
     // Meta retries unacknowledged webhooks; drop messages that were already handled
     const dedupId = message.providerMessageId || message.wamid;
-    if (dedupId && processedMessages.seen(`${connection.id}:${dedupId}`)) continue;
+    if (dedupId && !replay) {
+      // Fast in-process check first, then the shared DB claim (cross-instance, survives restarts)
+      if (processedMessages.seen(`${connection.id}:${dedupId}`)) continue;
+      if (inboxAvailable && message.from) {
+        try {
+          if (!(await inbox.claim(connection.id, { ...message, providerMessageId: dedupId }))) continue;
+        } catch (err) {
+          // Fail open on inbox outages (e.g. migration not applied) so customers still get replies
+          inboxAvailable = false;
+          console.error('[WhatsAppAutomation] Inbox unavailable, using in-memory dedup only:', err.message);
+        }
+      }
+    }
     if (message.from) grouped.set(message.from, [...(grouped.get(message.from) || []), message]);
   }
 
@@ -186,8 +202,10 @@ async function handleMessages({ automation, connection, provider, messages }) {
   const autoReplyService = new AutoReplyService(autoReplyRules);
 
   const processContact = ([contactWaId, contactMessages]) => sessionMutex.run(`${connection.id}:${contactWaId}`, async () => {
-    if (!inboundLimiter.allow(`${connection.id}:${contactWaId}`)) {
+    const messageIds = contactMessages.map((m) => m.providerMessageId || m.wamid);
+    if (!(await _allowContact(connection.id, contactWaId, inboxAvailable && !replay))) {
       console.warn('[WhatsAppAutomation] Inbound rate limit exceeded, dropping messages', { connectionId: connection.id, count: contactMessages.length });
+      if (inboxAvailable) await inbox.markDropped(connection.id, messageIds).catch(() => {});
       return;
     }
     const isNewSession = !store.get(connection.id, contactWaId);
@@ -283,12 +301,29 @@ async function handleMessages({ automation, connection, provider, messages }) {
       }
     }
     await store.set(connection, automation, contactWaId, entry);
+    if (inboxAvailable) await inbox.markDone(connection.id, messageIds).catch((err) => console.error('[WhatsAppAutomation] Inbox markDone failed:', err.message));
   });
 
   const results = await mapLimit([...grouped], CONTACT_CONCURRENCY, processContact);
   for (const result of results) {
     if (result.status === 'rejected') console.error('[WhatsAppAutomation] Contact processing failed:', result.reason?.message);
   }
+}
+
+const RATE_LIMIT = Number(process.env.WHATSAPP_CONTACT_RATE_LIMIT || 30);
+const RATE_WINDOW_MS = Number(process.env.WHATSAPP_CONTACT_RATE_WINDOW_MS || 60000);
+
+// Shared (DB) per-contact limit so scaling out does not multiply the allowance;
+// falls back to the in-process limiter when the inbox is unavailable.
+async function _allowContact(connectionId, contactWaId, useDb) {
+  if (useDb) {
+    try {
+      return (await inbox.countRecent(connectionId, contactWaId, RATE_WINDOW_MS)) <= RATE_LIMIT;
+    } catch (err) {
+      console.error('[WhatsAppAutomation] DB rate limit failed, using in-memory limiter:', err.message);
+    }
+  }
+  return inboundLimiter.allow(`${connectionId}:${contactWaId}`);
 }
 
 async function _checkAutoReply({ autoReplyService, message, automation, connection, contactWaId, entry, provider, log, isFirstMessage = false }) {

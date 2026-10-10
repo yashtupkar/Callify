@@ -126,14 +126,6 @@ class WhatsAppAutomationInboundRouter {
  */
 async function _processStatusUpdates(statusUpdates, connection) {
   for (const update of statusUpdates) {
-    console.log('[WhatsAppAutomationInboundRouter] Message status update:', {
-      connectionId: connection.id,
-      automationId: connection.automationId,
-      messageId: update.providerMessageId,
-      status: update.status,
-      timestamp: update.timestamp,
-    });
-
     if (update.status === 'failed' && update.errors && update.errors.length > 0) {
       const err = update.errors[0];
       console.error('[WhatsAppAutomationInboundRouter] Message delivery failed:', {

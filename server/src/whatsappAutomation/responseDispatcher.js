@@ -221,15 +221,6 @@ async function sendMetaCloudResponse({ provider, recipient, response, context })
     const apiResult = await provider.sendMessagePayload(payload);
     const messageId = apiResult?.messages?.[0]?.id;
 
-    console.log('[ResponseDispatcher] Meta message sent successfully:', {
-      provider: 'meta_cloud',
-      phoneNumberId: provider.phoneNumberId,
-      recipient: maskPhoneNumber(recipient),
-      responseType: response._type,
-      messageId,
-      success: true,
-    });
-
     return {
       success: true,
       messageId,
