@@ -88,10 +88,39 @@ function buildCustomTool(rawConfig) {
       if (ctx && typeof ctx.getRecentTranscript === 'function') {
         const transcript = ctx.getRecentTranscript() || [];
         if (transcript.length > 0) {
-          const userMsgs = transcript.filter(m => m.role === 'user' && typeof m.content === 'string');
-          const fullUserText = userMsgs.map(m => m.content).join(' ').toLowerCase();
+          // Identify the boundary of the CURRENT request.
+          // A boundary marks the end of a SUCCESSFULLY COMPLETED transaction.
+          // Only these count as boundaries:
+          //   • A tool result with success:true and a reference (record saved)
+          //   • An assistant message confirming a booking (contains a reference code)
+          // FAILED tool calls (NOT_CONFIRMED, MISSING_REQUIRED_FIELDS, etc.) are NOT
+          // boundaries — they are part of the ongoing request flow.
+          let lastBoundaryIdx = -1;
+          for (let i = transcript.length - 1; i >= 0; i--) {
+            const m = transcript[i];
+            if (m.role === 'tool') {
+              try {
+                const toolResult = typeof m.content === 'string' ? JSON.parse(m.content) : m.content;
+                if (toolResult?.success === true && toolResult?.reference) {
+                  lastBoundaryIdx = i;
+                  break;
+                }
+              } catch (_) { /* non-JSON tool result, not a boundary */ }
+              // Failed or informational tool results — keep scanning backward
+              continue;
+            }
+            if (m.role === 'assistant' && /Booked [A-Z0-9-]+|recorded with Reference|Reference:\s*[A-Z0-9-]+/i.test(m.content || '')) {
+              lastBoundaryIdx = i;
+              break;
+            }
+          }
 
-          // Check if key arguments (name, address, date) were actually mentioned by the user or present in profile
+          // Active request messages (only what was sent AFTER the last completed transaction, or full conversation if first)
+          const currentScopeMsgs = lastBoundaryIdx >= 0 ? transcript.slice(lastBoundaryIdx + 1) : transcript;
+          const userMsgs = currentScopeMsgs.filter(m => m.role === 'user' && typeof m.content === 'string');
+          const currentUserText = userMsgs.map(m => m.content).join(' ').toLowerCase();
+
+          // Check if transaction-specific fields (e.g. address, location, problem description, time) were given in THIS request
           const unprovided = [];
           for (const field of config.fields) {
             if (field.required !== false && args[field.key]) {
@@ -101,15 +130,25 @@ function buildCustomTool(rawConfig) {
                 const isAddress = field.key.includes('address') || field.label.toLowerCase().includes('address') || field.key.includes('location');
 
                 if (isName) {
-                  const matchesProfile = ctx.contactName && ctx.contactName.toLowerCase().includes(valStr);
-                  const matchesText = fullUserText.includes(valStr) || valStr.split(' ').some(w => w.length > 2 && fullUserText.includes(w));
+                  // Profile data: Customer name CAN be reused across requests from profile or earlier messages
+                  const matchesProfile = (ctx.contactName && ctx.contactName.toLowerCase().includes(valStr)) || (ctx.contactWaId && ctx.contactWaId.includes(valStr));
+                  const fullHistoryUserText = transcript.filter(m => m.role === 'user' && typeof m.content === 'string').map(m => m.content).join(' ').toLowerCase();
+                  const matchesText = currentUserText.includes(valStr) || fullHistoryUserText.includes(valStr) || valStr.split(' ').some(w => w.length > 2 && fullHistoryUserText.includes(w));
                   if (!matchesProfile && !matchesText) {
                     unprovided.push(field.label || field.key);
                   }
                 } else if (isAddress) {
+                  // Transaction data: Must be provided in the CURRENT request scope!
                   const addressWords = valStr.split(/[\s,.-]+/).filter(w => w.length > 2);
-                  const matchesText = fullUserText.includes(valStr) || addressWords.some(w => fullUserText.includes(w));
-                  if (!matchesText) {
+                  const matchesCurrent = currentUserText.includes(valStr) || addressWords.some(w => currentUserText.includes(w));
+                  if (!matchesCurrent) {
+                    unprovided.push(field.label || field.key);
+                  }
+                } else {
+                  // Any other custom field (notes, complaint description, requirement, etc.): Must be in CURRENT request scope!
+                  const words = valStr.split(/[\s,.-]+/).filter(w => w.length > 2);
+                  const matchesCurrent = currentUserText.includes(valStr) || (words.length > 0 && words.some(w => currentUserText.includes(w)));
+                  if (!matchesCurrent) {
                     unprovided.push(field.label || field.key);
                   }
                 }
@@ -117,10 +156,10 @@ function buildCustomTool(rawConfig) {
             }
           }
 
-          // Check if date/time ("when") was mentioned when askWhen is enabled
+          // Check if date/time ("when") was mentioned in the CURRENT request scope when askWhen is enabled
           if (config.askWhen && args.when) {
             const timeWords = ['today', 'tomorrow', 'yesterday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday', 'am', 'pm', 'morning', 'afternoon', 'evening', 'night', 'oclock', 'clock', 'january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'];
-            const hasTimeWord = timeWords.some(w => fullUserText.includes(w)) || /\b\d{1,4}[/-:]\d{1,4}\b/.test(fullUserText) || /\b\d{1,2}\s*(am|pm)?\b/.test(fullUserText);
+            const hasTimeWord = timeWords.some(w => currentUserText.includes(w)) || /\b\d{1,4}[/-:]\d{1,4}\b/.test(currentUserText) || /\b\d{1,2}\s*(am|pm)?\b/.test(currentUserText);
             if (!hasTimeWord) {
               unprovided.push('Date & Time');
             }
@@ -130,11 +169,12 @@ function buildCustomTool(rawConfig) {
             return {
               success: false,
               error: 'UNPROVIDED_CUSTOMER_DETAILS',
-              message: `Error: The customer has NOT provided their detail(s): [${unprovided.join(', ')}] in this conversation yet. DO NOT invent or reuse sample values. Send a text message asking the customer to provide their ${unprovided.join(', ')}.`
+              message: `Error: The customer has NOT provided fresh detail(s) for this new request: [${unprovided.join(', ')}]. DO NOT reuse details from previous requests. Send a text message asking the customer to provide their ${unprovided.join(', ')} for this request.`
             };
           }
 
-          const assistantMsgs = transcript.filter(m => m.role === 'assistant' && typeof m.content === 'string' && m.content.trim().length > 0);
+          // Check confirmation ONLY within the current request scope
+          const assistantMsgs = currentScopeMsgs.filter(m => m.role === 'assistant' && typeof m.content === 'string' && m.content.trim().length > 0);
           const lastUserMsg = userMsgs.length > 0 ? userMsgs[userMsgs.length - 1].content.toLowerCase() : '';
           const hasAskedConfirmation = assistantMsgs.some(m => {
             const text = m.content.toLowerCase();
@@ -144,11 +184,14 @@ function buildCustomTool(rawConfig) {
           const confirmWords = ['yes', 'yep', 'yeah', 'sure', 'ok', 'okay', 'correct', 'confirm', 'proceed', 'go ahead', 'do it', 'please', 'fine', 'looks good', 'right', 'agree'];
           const userConfirmedInMsg = confirmWords.some(w => new RegExp(`\\b${w}\\b`, 'i').test(lastUserMsg)) || lastUserMsg.includes('confirm');
 
-          if (!hasAskedConfirmation && !userConfirmedInMsg) {
+          // If the customer changed details in their last message (not a simple confirmation word), any previous confirmation is invalidated
+          const isExplicitChangeMsg = /\b(change|instead|actually|update|make it|reschedule|wrong|no)\b/i.test(lastUserMsg);
+
+          if (!hasAskedConfirmation || !userConfirmedInMsg || isExplicitChangeMsg) {
             return {
               success: false,
               error: 'NEED_USER_CONFIRMATION',
-              message: `Error: You have not presented a summary of the details to the customer or received their explicit confirmation yet in this chat. Send a text message to the customer summarizing the details (${config.fields.map(f => f.label).join(', ')}) and ask for their confirmation before calling this tool.`
+              message: `Error: You have not presented a fresh summary of the details to the customer or received their explicit confirmation for this request yet. Send a text message summarizing the current details (${config.fields.map(f => f.label).join(', ')}) and ask for their confirmation before calling this tool.`
             };
           }
         }
@@ -162,13 +205,12 @@ function buildCustomTool(rawConfig) {
         }
       }
 
-      const reference = `${slug(config.name, 3).toUpperCase() || 'REQ'}-${Date.now().toString(36).slice(-5).toUpperCase()}`;
-
       let contactId = null;
-      if (ctx?.workspaceId && ctx?.contactWaId) {
+      let createdRecord = null;
+      const autoId = ctx?.automationId || ctx?.workspaceId;
+      if (autoId && ctx?.contactWaId) {
         contactId = await crm.ensureContact({
-          workspaceId: ctx.workspaceId,
-          automationId: ctx.automationId,
+          automationId: autoId,
           waId: ctx.contactWaId,
           name: contactData.name || ctx.contactName,
         }).then(c => c?.id).catch(() => null);
@@ -180,26 +222,57 @@ function buildCustomTool(rawConfig) {
           if (config.stage) {
             await crm.setStage(contactId, config.stage, `Triggered by ${config.title}`).catch(() => {});
           }
-          const taskDetails = [`Reference Code: ${reference}`];
+          
+          const fieldsData = {};
           for (const field of config.fields) {
-            if (args[field.key]) taskDetails.push(`${field.label}: ${args[field.key]}`);
+            if (args[field.key]) fieldsData[field.key] = args[field.key];
           }
-          await crm.createTask({
-            workspaceId: ctx.workspaceId,
-            contactId,
-            title: `${config.title} (${reference})`,
-            description: taskDetails.join('\n'),
-            kind: config.name,
-            dueAt: args.when || null,
-          }).catch(() => {});
-          await crm.addNote(contactId, `Custom tool "${config.title}" recorded with Reference: ${reference}`).catch(() => {});
+
+          try {
+            if (typeof crm.createTask === 'function') {
+              const taskRes = await crm.createTask({
+                automationId: autoId,
+                contactId,
+                kind: config.name,
+                title: `${config.title}`,
+                dueAt: args.when || null,
+              });
+              if (taskRes) createdRecord = taskRes;
+            }
+            if (typeof crm.createRecord === 'function') {
+              try {
+                const rec = await crm.createRecord({
+                  automationId: autoId,
+                  contactId,
+                  type: config.name,
+                  title: `${config.title}`,
+                  fields: fieldsData,
+                  dueDate: args.when || null,
+                });
+                if (rec) createdRecord = rec;
+              } catch (dbErr) {
+                if (!createdRecord) throw dbErr;
+              }
+            }
+            if (createdRecord?.reference) {
+              await crm.addNote(contactId, `Custom tool "${config.title}" recorded with Reference: ${createdRecord.reference}`).catch(() => {});
+            }
+          } catch (createErr) {
+            console.error('[CustomTool] record creation failed:', createErr.message);
+            return {
+              success: false,
+              error: 'DATABASE_WRITE_FAILED',
+              message: 'Sorry, your request could not be saved at this time. Please try again or ask our team for assistance.',
+            };
+          }
         }
       }
 
+      const activeRef = createdRecord?.reference || crm.generateReference(slug(config.name, 3));
       return {
         success: true,
-        reference,
-        message: (config.replyMessage || 'Your request has been recorded and our team will follow up.').replace(/\{\{\s*ref\s*\}\}/gi, reference),
+        reference: activeRef,
+        message: (config.replyMessage || 'Your request has been recorded and our team will follow up.').replace(/\{\{\s*ref\s*\}\}/gi, activeRef),
       };
     },
   };

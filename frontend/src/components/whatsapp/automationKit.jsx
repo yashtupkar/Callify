@@ -7,16 +7,12 @@ import { useAuth } from "@/hooks/useAuth";
 export const WEBHOOK_URL = `${SERVER_URL}/api/whatsapp-automation/webhook`;
 
 export const toolOptions = [
-  ["crm_get_contact", "View customer profile"],
-  ["crm_update_contact", "Save customer details"],
-  ["crm_set_stage", "Move lead stage"],
-  ["crm_update_tags", "Tag customers"],
-  ["crm_add_note", "Add CRM notes"],
-  ["crm_create_task", "Create follow-ups & requests"],
-  ["crm_list_tasks", "List open tasks"],
-  ["crm_complete_task", "Complete tasks"],
-  ["crm_create_deal", "Create deals"],
-  ["crm_update_deal", "Update deals"],
+
+  ["crm_create_record", "Create records (leads, bookings, etc)"],
+  ["crm_list_records", "List open records"],
+  ["crm_change_record_status", "Change record status"],
+  ["check_request_status", "Check status by reference ID"],
+  ["check_my_requests", "Check my active requests"],
   ["get_current_datetime", "Current date & time"],
   ["get_business_hours", "Business hours"],
   ["search_products", "Search products"],
@@ -61,7 +57,7 @@ export const responseTypes = [
   ["cta_url", "Text + website link"],
 ];
 export const tabs = [
-  ["overview", "Overview"],
+  ["overview", "Overview"],["crm", "CRM"],
   ["rules", "Auto-replies"],
   ["settings", "Settings"],
   ["channels", "Channels"],

@@ -33,6 +33,7 @@ import {
   AutomationModals,
 } from "@/components/whatsapp/automationKit";
 import CustomToolsEditor from "@/components/whatsapp/CustomToolsEditor";
+import CrmTab from "@/components/whatsapp/CrmTab";
 
 export default function WhatsAppAutomationDetailsPage() {
   const navigate = useNavigate();
@@ -236,6 +237,7 @@ function DetailView({
       </div>
 
       {tab === "overview" && <OverviewTab {...tabProps} setTab={setTab} />}
+      {tab === "crm" && <CrmTab {...tabProps} />}
       {tab === "rules" && <RulesTab {...tabProps} />}
       {tab === "settings" && <SettingsTab {...tabProps} />}
       {tab === "channels" && <ChannelsTab {...tabProps} />}

@@ -80,3 +80,134 @@ test('sanitizeToolPairs removes orphaned tool calls and tool replies', () => {
   assert.deepStrictEqual(out.map((m) => m.role), ['user', 'user', 'assistant', 'tool', 'assistant']);
   assert.strictEqual(out[2].tool_calls[0].id, '2');
 });
+
+test('WhatsAppToolExecutor halts tool execution and forces text reply on NOT_CONFIRMED', async () => {
+  const { WhatsAppToolExecutor } = require('../src/whatsappAutomation/tools/WhatsAppToolExecutor');
+  let repromptSchemas = null;
+  let repromptToolChoice = null;
+  const fakeLlm = {
+    generateResponse: async (_transcript, schemas, toolChoice) => {
+      repromptSchemas = schemas;
+      repromptToolChoice = toolChoice;
+      return 'Please confirm the details';
+    },
+  };
+  const registry = {
+    has: () => true,
+    validate: () => null,
+    execute: async () => ({ success: false, error: 'NOT_CONFIRMED', message: 'Ask user for confirmation' }),
+    getAllSchemas: () => [{ type: 'function', function: { name: 'book_survey' } }],
+    names: () => ['book_survey'],
+  };
+  const executor = new WhatsAppToolExecutor({
+    registry,
+    llm: fakeLlm,
+    transcript: [],
+    getRecentTranscript: () => [],
+  });
+
+  await executor.handle('book_survey', { user_confirmed: false }, null, 'call_1');
+
+  // Must have passed empty schemas and tool_choice: 'none' to force text output to user
+  assert.deepStrictEqual(repromptSchemas, []);
+  assert.strictEqual(repromptToolChoice, 'none');
+});
+
+test('consecutive requests from same customer: each requires fresh details and confirmation', async () => {
+  const { buildCustomTool } = require('../src/whatsappAutomation/tools/customTool');
+  const tool = buildCustomTool({
+    name: 'book_inspection',
+    title: 'Site Inspection',
+    fields: [{ label: 'Name' }, { label: 'Address' }],
+    askWhen: true,
+  });
+
+  // Turn 1: First request conversation
+  const transcript1 = [
+    { role: 'user', content: 'Hi, I want a site inspection. Name: Yash Tupkar, Address: 12 MG Road, tomorrow at 10am' },
+    { role: 'assistant', content: 'I have noted: Yash Tupkar at 12 MG Road for tomorrow at 10am. Should I confirm this booking?' },
+    { role: 'user', content: 'Yes, please confirm it' },
+  ];
+
+  // Request 1 execution succeeds because user confirmed
+  const res1 = await tool.handler(
+    { name: 'Yash Tupkar', address: '12 MG Road', when: 'tomorrow at 10am' },
+    { getRecentTranscript: () => transcript1, contactName: 'Yash Tupkar', contactWaId: '917898297769' }
+  );
+  assert.strictEqual(res1.success, true);
+  assert.match(res1.reference, /BOO-[A-Z0-9-]+/);
+
+  // Completed Turn 1 assistant message recorded in transcript
+  const transcriptAfterReq1 = [
+    ...transcript1,
+    { role: 'assistant', content: `Booked ${res1.reference}. Your inspection has been scheduled!` },
+  ];
+
+  // Turn 2: Customer starts SECOND request without providing address/date
+  const transcript2Unfinished = [
+    ...transcriptAfterReq1,
+    { role: 'user', content: 'I need another inspection for my warehouse' },
+  ];
+
+  // If assistant attempts to call tool reusing previous address '12 MG Road' and time 'tomorrow at 10am'
+  const res2Stale = await tool.handler(
+    { name: 'Yash Tupkar', address: '12 MG Road', when: 'tomorrow at 10am' },
+    { getRecentTranscript: () => transcript2Unfinished, contactName: 'Yash Tupkar', contactWaId: '917898297769' }
+  );
+  // Must reject because address was NOT provided in the fresh request scope!
+  assert.strictEqual(res2Stale.success, false);
+  assert.strictEqual(res2Stale.error, 'UNPROVIDED_CUSTOMER_DETAILS');
+
+  // Turn 3: Customer provides fresh details for second request
+  const transcript2Provided = [
+    ...transcript2Unfinished,
+    { role: 'assistant', content: 'Sure, what is the address and preferred date/time for the warehouse inspection?' },
+    { role: 'user', content: 'Warehouse address is Sector 4 Plot 9, on Friday 4pm' },
+  ];
+
+  // If tool is called before confirmation
+  const res2Unconfirmed = await tool.handler(
+    { name: 'Yash Tupkar', address: 'Sector 4 Plot 9', when: 'Friday 4pm' },
+    { getRecentTranscript: () => transcript2Provided, contactName: 'Yash Tupkar', contactWaId: '917898297769' }
+  );
+  assert.strictEqual(res2Unconfirmed.success, false);
+  assert.strictEqual(res2Unconfirmed.error, 'NEED_USER_CONFIRMATION');
+
+  // Turn 4: Assistant summarizes and user confirms the second request
+  const transcript2Confirmed = [
+    ...transcript2Provided,
+    { role: 'assistant', content: 'Summary: Warehouse inspection at Sector 4 Plot 9 on Friday 4pm. Confirm?' },
+    { role: 'user', content: 'Yes, confirm it' },
+  ];
+
+  const res2Success = await tool.handler(
+    { name: 'Yash Tupkar', address: 'Sector 4 Plot 9', when: 'Friday 4pm' },
+    { getRecentTranscript: () => transcript2Confirmed, contactName: 'Yash Tupkar', contactWaId: '917898297769' }
+  );
+  assert.strictEqual(res2Success.success, true);
+  assert.notStrictEqual(res2Success.reference, res1.reference);
+});
+
+test('modifying details invalidates previous confirmation', async () => {
+  const { buildCustomTool } = require('../src/whatsappAutomation/tools/customTool');
+  const tool = buildCustomTool({
+    name: 'book_survey',
+    title: 'Site Survey',
+    fields: [{ label: 'Name' }, { label: 'Address' }],
+  });
+
+  const transcript = [
+    { role: 'user', content: 'Name: Ravi, Address: 5th Cross Road' },
+    { role: 'assistant', content: 'Summary: Ravi at 5th Cross Road. Confirm?' },
+    { role: 'user', content: 'Actually, change the address to 8th Main Road instead' },
+  ];
+
+  const out = await tool.handler(
+    { name: 'Ravi', address: '8th Main Road' },
+    { getRecentTranscript: () => transcript, contactName: 'Ravi', contactWaId: '91' }
+  );
+
+  // Must reject because change of details invalidates previous confirmation
+  assert.strictEqual(out.success, false);
+  assert.strictEqual(out.error, 'NEED_USER_CONFIRMATION');
+});

@@ -1,23 +1,25 @@
 const express = require('express');
 const { dbService } = require('../../services/DatabaseService');
 const crm = require('./crmService');
+const { createWhatsAppAutomationProvider } = require('../factory');
+const { store } = require('../sessionStore');
 
-/** Workspace-scoped REST API for the WhatsApp CRM (mounted at /crm). */
-function createCrmRouter(resolveWorkspaceId) {
-  const router = express.Router();
+/** Automation-scoped REST API for the WhatsApp CRM (mounted at /:automationId/crm). */
+function createCrmRouter(resolveAutomationId) {
+  const router = express.Router({ mergeParams: true });
   const db = () => dbService.prisma;
 
   router.use(async (req, res, next) => {
     try {
-      req.workspaceId = await resolveWorkspaceId(req);
-      if (!req.workspaceId) return res.status(403).json({ error: 'No workspace is configured for this account' });
+      req.automationId = await resolveAutomationId(req);
+      if (!req.automationId) return res.status(403).json({ error: 'No automation is configured for this account' });
       next();
     } catch (error) {
       next(error);
     }
   });
 
-  const owned = (req, id) => db().whatsAppCrmContact.findFirst({ where: { id, workspaceId: req.workspaceId } });
+  const ownedContact = (req, id) => db().automationContact.findFirst({ where: { id, automationId: req.automationId } });
   const fail = (res, error) => {
     console.error('[WhatsAppCRM]', error.message);
     res.status(error.code === 'P2025' ? 404 : 400).json({ error: error.message });
@@ -25,17 +27,15 @@ function createCrmRouter(resolveWorkspaceId) {
 
   router.get('/summary', async (req, res) => {
     try {
-      const workspaceId = req.workspaceId;
-      const [stages, openTasks, overdue, deals] = await Promise.all([
-        db().whatsAppCrmContact.groupBy({ by: ['stage'], where: { workspaceId }, _count: { _all: true } }),
-        db().whatsAppCrmTask.count({ where: { workspaceId, status: 'open' } }),
-        db().whatsAppCrmTask.count({ where: { workspaceId, status: 'open', dueAt: { lt: new Date() } } }),
-        db().whatsAppCrmDeal.groupBy({ by: ['status'], where: { workspaceId }, _count: { _all: true }, _sum: { value: true } }),
+      const automationId = req.automationId;
+      const [stages, openRecords, overdue] = await Promise.all([
+        db().automationContact.groupBy({ by: ['stage'], where: { automationId }, _count: { _all: true } }),
+        db().automationRecord.count({ where: { automationId, status: 'open' } }),
+        db().automationRecord.count({ where: { automationId, status: 'open', dueDate: { lt: new Date() } } }),
       ]);
       res.json({
         stages: Object.fromEntries(crm.STAGES.map((s) => [s, stages.find((r) => r.stage === s)?._count._all || 0])),
-        openTasks, overdueTasks: overdue,
-        deals: deals.map((d) => ({ status: d.status, count: d._count._all, value: d._sum.value || 0 })),
+        openRecords, overdueRecords: overdue,
       });
     } catch (error) { fail(res, error); }
   });
@@ -46,7 +46,7 @@ function createCrmRouter(resolveWorkspaceId) {
       const page = Math.max(1, Number(req.query.page) || 1);
       const take = Math.min(100, Number(req.query.limit) || 25);
       const where = {
-        workspaceId: req.workspaceId,
+        automationId: req.automationId,
         ...(stage ? { stage: String(stage) } : {}),
         ...(tag ? { tags: { has: String(tag).toLowerCase() } } : {}),
         ...(q ? { OR: [
@@ -57,11 +57,11 @@ function createCrmRouter(resolveWorkspaceId) {
         ] } : {}),
       };
       const [contacts, total] = await Promise.all([
-        db().whatsAppCrmContact.findMany({
+        db().automationContact.findMany({
           where, orderBy: { lastMessageAt: { sort: 'desc', nulls: 'last' } }, skip: (page - 1) * take, take,
-          include: { _count: { select: { tasks: { where: { status: 'open' } }, deals: true } } },
+          include: { _count: { select: { records: { where: { status: 'open' } } } } },
         }),
-        db().whatsAppCrmContact.count({ where }),
+        db().automationContact.count({ where }),
       ]);
       res.json({ contacts, total, page, pageSize: take });
     } catch (error) { fail(res, error); }
@@ -69,13 +69,12 @@ function createCrmRouter(resolveWorkspaceId) {
 
   router.get('/contacts/:id', async (req, res) => {
     try {
-      if (!(await owned(req, req.params.id))) return res.status(404).json({ error: 'Contact not found' });
-      const contact = await db().whatsAppCrmContact.findUnique({
+      if (!(await ownedContact(req, req.params.id))) return res.status(404).json({ error: 'Contact not found' });
+      const contact = await db().automationContact.findUnique({
         where: { id: req.params.id },
         include: {
           activities: { orderBy: { createdAt: 'desc' }, take: 100 },
-          tasks: { orderBy: [{ status: 'asc' }, { dueAt: 'asc' }] },
-          deals: { orderBy: { createdAt: 'desc' } },
+          records: { orderBy: [{ status: 'asc' }, { dueDate: 'asc' }] },
         },
       });
       res.json({ contact });
@@ -84,67 +83,88 @@ function createCrmRouter(resolveWorkspaceId) {
 
   router.patch('/contacts/:id', async (req, res) => {
     try {
-      if (!(await owned(req, req.params.id))) return res.status(404).json({ error: 'Contact not found' });
+      if (!(await ownedContact(req, req.params.id))) return res.status(404).json({ error: 'Contact not found' });
       const { stage, tags, optedOut, ...fields } = req.body || {};
       if (Object.keys(fields).length) await crm.updateContact(req.params.id, fields, 'user');
       if (stage) await crm.setStage(req.params.id, stage, 'Changed by team', 'user');
       if (Array.isArray(tags)) {
-        const current = await db().whatsAppCrmContact.findUnique({ where: { id: req.params.id } });
+        const current = await db().automationContact.findUnique({ where: { id: req.params.id } });
         await crm.changeTags(req.params.id, { add: tags, remove: current.tags }, 'user');
       }
-      if (typeof optedOut === 'boolean') await db().whatsAppCrmContact.update({ where: { id: req.params.id }, data: { optedOut } });
-      res.json({ contact: await db().whatsAppCrmContact.findUnique({ where: { id: req.params.id } }) });
+      if (typeof optedOut === 'boolean') await db().automationContact.update({ where: { id: req.params.id }, data: { optedOut } });
+      res.json({ contact: await db().automationContact.findUnique({ where: { id: req.params.id } }) });
     } catch (error) { fail(res, error); }
   });
 
   router.post('/contacts/:id/notes', async (req, res) => {
     try {
-      if (!(await owned(req, req.params.id))) return res.status(404).json({ error: 'Contact not found' });
+      if (!(await ownedContact(req, req.params.id))) return res.status(404).json({ error: 'Contact not found' });
       res.status(201).json({ activity: await crm.addNote(req.params.id, req.body?.note, 'user') });
     } catch (error) { fail(res, error); }
   });
 
-  router.post('/contacts/:id/tasks', async (req, res) => {
-    try {
-      if (!(await owned(req, req.params.id))) return res.status(404).json({ error: 'Contact not found' });
-      res.status(201).json({ task: await crm.createTask({ ...req.body, workspaceId: req.workspaceId, contactId: req.params.id }, 'user') });
-    } catch (error) { fail(res, error); }
-  });
-
-  router.get('/tasks', async (req, res) => {
+  router.get('/records', async (req, res) => {
     try {
       const status = req.query.status ? String(req.query.status) : 'open';
-      const tasks = await db().whatsAppCrmTask.findMany({
-        where: { workspaceId: req.workspaceId, status }, orderBy: { dueAt: { sort: 'asc', nulls: 'last' } }, take: 200,
+      const type = req.query.type ? String(req.query.type) : undefined;
+      const records = await db().automationRecord.findMany({
+        where: { automationId: req.automationId, status, ...(type ? { type } : {}) }, 
+        orderBy: { dueDate: { sort: 'asc', nulls: 'last' } }, take: 200,
         include: { contact: { select: { id: true, name: true, waId: true } } },
       });
-      res.json({ tasks });
+      res.json({ records });
     } catch (error) { fail(res, error); }
   });
 
-  router.patch('/tasks/:taskId', async (req, res) => {
+  router.patch('/records/:recordId', async (req, res) => {
     try {
-      const task = await db().whatsAppCrmTask.findFirst({ where: { id: req.params.taskId, workspaceId: req.workspaceId } });
-      if (!task) return res.status(404).json({ error: 'Task not found' });
-      const status = ['open', 'done', 'cancelled'].includes(req.body?.status) ? req.body.status : task.status;
-      const updated = await db().whatsAppCrmTask.update({ where: { id: task.id }, data: { status } });
-      await crm.logActivity(task.contactId, 'task', `Task ${status}: ${task.title}`, { taskId: task.id }, 'user');
-      res.json({ task: updated });
+      const record = await db().automationRecord.findFirst({ where: { id: req.params.recordId, automationId: req.automationId } });
+      if (!record) return res.status(404).json({ error: 'Record not found' });
+      if (req.body?.status) {
+        await crm.updateRecordStatus(record.contactId, record.reference, req.body.status, 'user');
+      }
+      res.json({ record: await db().automationRecord.findUnique({ where: { id: record.id } }) });
     } catch (error) { fail(res, error); }
   });
 
-  router.post('/contacts/:id/deals', async (req, res) => {
+  router.post('/contacts/:id/message', async (req, res) => {
     try {
-      if (!(await owned(req, req.params.id))) return res.status(404).json({ error: 'Contact not found' });
-      res.status(201).json({ deal: await crm.createDeal({ ...req.body, workspaceId: req.workspaceId, contactId: req.params.id }, 'user') });
-    } catch (error) { fail(res, error); }
-  });
+      const contact = await ownedContact(req, req.params.id);
+      if (!contact) return res.status(404).json({ error: 'Contact not found' });
+      
+      const text = req.body?.text;
+      if (!text) return res.status(400).json({ error: 'Message text is required' });
 
-  router.patch('/deals/:dealId', async (req, res) => {
-    try {
-      const deal = await db().whatsAppCrmDeal.findFirst({ where: { id: req.params.dealId, workspaceId: req.workspaceId } });
-      if (!deal) return res.status(404).json({ error: 'Deal not found' });
-      res.json({ deal: await crm.updateDeal(deal.contactId, deal.id, req.body || {}, 'user') });
+      // Find an active connection for this automation
+      const connection = await db().whatsAppConnection.findFirst({
+        where: { automationId: req.automationId, enabled: true }
+      });
+      if (!connection) return res.status(400).json({ error: 'No active WhatsApp connection for this automation' });
+
+      const provider = await createWhatsAppAutomationProvider(connection);
+      if (!provider) return res.status(500).json({ error: 'Failed to initialize WhatsApp provider' });
+
+      await provider.sendText(contact.waId, text);
+      
+      await crm.logActivity(req.automationId, contact.id, null, 'message', `Sent: ${text}`, null, 'user');
+
+      // Sync message into active session transcript so LLM retains conversation context
+      try {
+        const sessionEntry = store.get(connection.id, contact.waId);
+        if (sessionEntry?.conversationManager?.transcript) {
+          sessionEntry.conversationManager.transcript.push({
+            role: 'assistant',
+            content: text,
+            metadata: { sentBy: 'human_operator' },
+          });
+          const automation = await db().whatsAppAutomation.findUnique({ where: { id: req.automationId } });
+          if (automation) await store.set(connection, automation, contact.waId, sessionEntry);
+        }
+      } catch (syncErr) {
+        console.warn('[WhatsAppCRM] Failed to sync manual message to transcript:', syncErr.message);
+      }
+
+      res.json({ success: true });
     } catch (error) { fail(res, error); }
   });
 

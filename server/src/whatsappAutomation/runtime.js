@@ -1,5 +1,6 @@
 const { WhatsAppConversationManager } = require('./conversationManager');
 const { buildRegistryForAutomation } = require('./tools');
+const crm = require('./tools/crmService');
 
 const { WhatsAppAutomationChannelAdapter } = require('./channelAdapter');
 const { buildWhatsAppPrompt } = require('./promptBuilder');
@@ -62,15 +63,23 @@ function getIncomingLogMessage(message) {
 
 async function getOrCreateSession({ automation, connection, contactWaId, contactJid, provider, profileName }) {
   let entry = store.get(connection.id, contactWaId);
-  if (entry) { store.touch(connection.id, contactWaId); return entry; }
+  if (entry) {
+    store.touch(connection.id, contactWaId);
+    return { entry, isNew: false, persisted: null };
+  }
   const persisted = await store.load(connection, automation, contactWaId);
+  const isNew = !persisted;
 
   const adapter = new WhatsAppAutomationChannelAdapter({
     provider, contactWaId, contactJid, businessPhoneNumber: connection.phoneNumber, instanceId: connection.id,
     automationId: automation.id,
   });
   adapter.contactProfileName = profileName || null;
+  adapter.sessionId = persisted?.id || null;
+
   const manager = new WhatsAppConversationManager(adapter, automation.providers || null);
+  manager.sessionId = persisted?.id || null;
+
   // Only tools in this registry are exposed to the LLM or executable.
   const registry = buildRegistryForAutomation(automation);
   manager.setRegistry(registry);
@@ -78,6 +87,7 @@ async function getOrCreateSession({ automation, connection, contactWaId, contact
     workspaceId: automation.workspaceId,
     automationId: automation.id,
     timezone: automation.timezone,
+    sessionId: persisted?.id || null,
   });
   const config = {
     systemPrompt: buildWhatsAppPrompt(automation, {
@@ -101,6 +111,7 @@ async function getOrCreateSession({ automation, connection, contactWaId, contact
     contactName: adapter.contactProfileName,
     contactProvider: connection.provider,
     connectionId: connection.id,
+    sessionId: persisted?.id || null,
   });
 
   await manager.start({ ...config, firstMessage: persisted ? '' : config.firstMessage });
@@ -113,12 +124,13 @@ async function getOrCreateSession({ automation, connection, contactWaId, contact
     conversationManager: manager,
     adapter,
     contactWaId,
+    sessionId: persisted?.id || null,
     status: persisted?.status || 'active',
     createdAt: persisted?.createdAt,
   };
   entry.status = entry.conversationManager.isHandoff ? 'human_handoff' : 'active';
   await store.set(connection, automation, contactWaId, entry);
-  return entry;
+  return { entry, isNew, persisted };
 }
 
 // `replay` is set by crash recovery: the messages were already claimed in the inbox.
@@ -170,19 +182,64 @@ async function handleMessages({ automation, connection, provider, messages, repl
       if (inboxAvailable) await inbox.markDropped(connection.id, messageIds).catch(() => {});
       return;
     }
-    const isNewSession = !store.get(connection.id, contactWaId);
-    const entry = await getOrCreateSession({
+    const { entry, isNew: isNewSession, persisted } = await getOrCreateSession({
       automation, connection, contactWaId, provider,
       contactJid: contactMessages[0].jid || contactWaId,
       profileName: contactMessages[0].profileName,
     });
 
+    // Ensure contact exists and check opt-out compliance
+    let crmContact = null;
+    try {
+      crmContact = await crm.ensureContact({
+        automationId: automation.id,
+        waId: contactWaId,
+        name: contactMessages[0]?.profileName,
+      });
+    } catch (e) {
+      console.warn('[WhatsAppAutomation] CRM ensureContact failed:', e.message);
+    }
 
+    // Determine if this is truly the contact's first message ever.
+    // A session loaded from DB (persisted != null) is definitively NOT a first contact —
+    // even if it was evicted from the in-memory cache (isNewSession=true after server restart).
+    // hasPriorTranscript covers the in-memory-only case.
+    const hasPriorTranscript = Array.isArray(entry.conversationManager?.transcript) && entry.conversationManager.transcript.length > 0;
+    const hasPriorMessages = Boolean(persisted) || (crmContact?.messageCount || 0) > 1;
+    const isFirstContactMessage = isNewSession && !hasPriorTranscript && !hasPriorMessages;
+
+    const STOP_COMMANDS = new Set(['stop', 'unsubscribe', 'cancel', 'quit', 'optout', 'end']);
+    const START_COMMANDS = new Set(['start', 'unstop', 'subscribe']);
 
     for (const [index, message] of contactMessages.entries()) {
-      // If this is the first message on a new session that has an initial greeting,
+      const rawText = String(message.text || '').trim().toLowerCase();
+
+      // Handle STOP command
+      if (STOP_COMMANDS.has(rawText)) {
+        if (crmContact) await crm.updateContact(crmContact.id, { optedOut: true });
+        await entry.adapter.sendText('You have been unsubscribed from automated messages. Reply START at any time to resume communication.');
+        continue;
+      }
+
+      // Handle START command
+      if (START_COMMANDS.has(rawText)) {
+        if (crmContact) {
+          await crm.updateContact(crmContact.id, { optedOut: false });
+          crmContact.optedOut = false;
+        }
+        await entry.adapter.sendText('You have been resubscribed to messages. How can we help you today?');
+        continue;
+      }
+
+      // If contact is opted out, suppress all automated replies
+      if (crmContact?.optedOut) {
+        console.log(`[WhatsAppAutomation] Suppressing automated reply for opted-out contact: ${contactWaId}`);
+        continue;
+      }
+
+      // If this is genuinely the first message from a brand new contact on a new session with greeting,
       // record the user's message without generating another AI reply.
-      if (isNewSession && index === 0 && initialMessage && !autoReplyService.hasFirstMessageRule()) {
+      if (isFirstContactMessage && index === 0 && initialMessage && !autoReplyService.hasFirstMessageRule()) {
         const text = message.text || `[User sent a ${message.type || 'message'}]`;
         entry.conversationManager.transcript.push({ role: 'user', content: text });
         await store.set(connection, automation, contactWaId, entry);
@@ -193,7 +250,11 @@ async function handleMessages({ automation, connection, provider, messages, repl
       let log = null;
       try {
         const inboundMessage = getIncomingLogMessage(message);
-        log = WhatsAppAutomationLogService.build(automation.id, { connectionId: connection.id, contactWaId });
+        log = WhatsAppAutomationLogService.build(automation.id, {
+          connectionId: connection.id,
+          contactWaId,
+          sessionId: entry.sessionId || entry.id,
+        });
         await log.info('message', 'incoming', inboundMessage || `Received ${message.type} message`, {
           messageType: message.type,
           messageId: message.id,
@@ -210,7 +271,7 @@ async function handleMessages({ automation, connection, provider, messages, repl
       // Increment received counter
       await _incrementMessageCounter(connection.id, contactWaId, 'received');
 
-      // Check for auto-reply BEFORE LLM
+      // Check for auto-reply BEFORE LLM (only trigger welcome rule on genuinely first contact message)
       const autoReplyResult = await _checkAutoReply({
         autoReplyService,
         message,
@@ -220,7 +281,7 @@ async function handleMessages({ automation, connection, provider, messages, repl
         entry,
         provider,
         log,
-        isFirstMessage: isNewSession && index === 0,
+        isFirstMessage: isFirstContactMessage && index === 0,
       });
       
       if (autoReplyResult.handled) {

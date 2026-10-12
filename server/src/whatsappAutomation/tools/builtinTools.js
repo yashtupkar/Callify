@@ -7,7 +7,7 @@ const str = (description) => ({ type: 'string', description });
 async function currentContact(ctx) {
   if (ctx.crmContactId) return ctx.crmContactId;
   const contact = await crm.ensureContact({
-    workspaceId: ctx.workspaceId, automationId: ctx.automationId, waId: ctx.contactWaId, name: ctx.contactName,
+    automationId: ctx.automationId, waId: ctx.contactWaId, name: ctx.contactName,
   });
   if (!contact) throw new Error('CRM contact is unavailable for this conversation');
   ctx.crmContactId = contact.id;
@@ -97,75 +97,81 @@ const contactTools = [
     },
   },
   {
-    name: 'crm_create_task',
+    name: 'crm_create_record',
     category: 'crm',
-    description: 'Create a follow-up, callback or appointment request for the business team. Use kind "appointment" for booking requests (it is a request that staff confirm, not a confirmed booking).',
+    description: 'Create a new record (like a lead, booking, or complaint) for the customer. MUST ONLY be called AFTER the customer has explicitly confirmed the summarized details in the chat.',
     parameters: {
       type: 'object',
       properties: {
-        title: str('What needs to be done'),
-        description: str('Extra details such as service, party size or preferences'),
-        kind: { type: 'string', enum: crm.TASK_KINDS, description: 'followup, appointment, callback or other' },
-        dueAt: str('When it is due or requested, ISO 8601 date-time in the business timezone'),
+        title: str('Short title for the record'),
+        type: str('The type of record (e.g. "booking", "lead", "complaint")'),
+        fields: { type: 'object', description: 'Any collected details as JSON' },
+        dueDate: str('When it is due, ISO 8601 date-time'),
       },
-      required: ['title'],
+      required: ['title', 'type'],
       additionalProperties: false,
     },
     handler: async (args, ctx) => {
-      const task = await crm.createTask({ ...args, workspaceId: ctx.workspaceId, contactId: await currentContact(ctx) });
-      return { success: true, taskId: task.id, kind: task.kind, dueAt: task.dueAt, status: 'pending_team_confirmation' };
+      // Backend confirmation enforcement
+      if (ctx && typeof ctx.getRecentTranscript === 'function') {
+        const transcript = ctx.getRecentTranscript() || [];
+        if (transcript.length > 0) {
+          const userMsgs = transcript.filter(m => m.role === 'user' && typeof m.content === 'string');
+          const lastUserMsg = userMsgs.length > 0 ? userMsgs[userMsgs.length - 1].content.toLowerCase() : '';
+          const confirmWords = ['yes', 'yep', 'yeah', 'sure', 'ok', 'okay', 'correct', 'confirm', 'proceed', 'go ahead', 'do it', 'please', 'fine', 'looks good', 'right', 'agree'];
+          const userConfirmedInMsg = confirmWords.some(w => new RegExp(`\\b${w}\\b`, 'i').test(lastUserMsg)) || lastUserMsg.includes('confirm');
+          const isExplicitChangeMsg = /\b(change|instead|actually|update|make it|reschedule|wrong|no)\b/i.test(lastUserMsg);
+
+          if (!userConfirmedInMsg || isExplicitChangeMsg) {
+            return {
+              success: false,
+              error: 'NEED_USER_CONFIRMATION',
+              message: `Error: You must present a clear summary of this ${args.type || 'request'} to the customer and receive their explicit confirmation before creating the record.`
+            };
+          }
+        }
+      }
+
+      const record = await crm.createRecord({ ...args, automationId: ctx.automationId, contactId: await currentContact(ctx) });
+      return { success: true, reference: record.reference, type: record.type, status: record.status };
     },
   },
   {
-    name: 'crm_list_tasks',
+    name: 'crm_list_records',
     category: 'crm',
-    description: 'List the open tasks, follow-ups and appointment requests of the current customer.',
+    description: 'List the open records (bookings, requests, etc.) of the current customer.',
     handler: async (_args, ctx) => {
-      const tasks = await dbService.prisma.whatsAppCrmTask.findMany({
-        where: { contactId: await currentContact(ctx), status: 'open' }, orderBy: { dueAt: 'asc' }, take: 20,
+      const records = await dbService.prisma.automationRecord.findMany({
+        where: { contactId: await currentContact(ctx), status: 'open' }, orderBy: { createdAt: 'desc' }, take: 20,
       });
-      return { tasks: tasks.map((t) => ({ id: t.id, title: t.title, kind: t.kind, dueAt: t.dueAt })) };
+      return { records: records.map((r) => ({ reference: r.reference, title: r.title, type: r.type, status: r.status })) };
     },
   },
   {
-    name: 'crm_complete_task',
+    name: 'crm_change_record_status',
     category: 'crm',
-    description: 'Mark one of the customer\'s open tasks as done or cancelled-by-resolution. Use the id from crm_list_tasks or crm_get_contact.',
-    parameters: { type: 'object', properties: { taskId: str('Task id') }, required: ['taskId'], additionalProperties: false },
+    description: 'Change the status of an existing record (e.g., to "done" or "cancelled"). MUST ONLY be called AFTER the customer explicitly requests or confirms the status change.',
+    parameters: { type: 'object', properties: { reference: str('Record reference code'), status: str('New status (e.g. done, open, cancelled)') }, required: ['reference', 'status'], additionalProperties: false },
     handler: async (args, ctx) => {
-      await crm.completeTask(await currentContact(ctx), args.taskId);
+      if (ctx && typeof ctx.getRecentTranscript === 'function') {
+        const transcript = ctx.getRecentTranscript() || [];
+        if (transcript.length > 0) {
+          const userMsgs = transcript.filter(m => m.role === 'user' && typeof m.content === 'string');
+          const lastUserMsg = userMsgs.length > 0 ? userMsgs[userMsgs.length - 1].content.toLowerCase() : '';
+          const cancelOrConfirmWords = ['cancel', 'close', 'done', 'yes', 'confirm', 'proceed', 'sure', 'ok'];
+          const userApproved = cancelOrConfirmWords.some(w => new RegExp(`\\b${w}\\b`, 'i').test(lastUserMsg));
+          if (!userApproved) {
+            return {
+              success: false,
+              error: 'NEED_USER_CONFIRMATION',
+              message: `Error: Ask the customer to confirm changing record ${args.reference} status to "${args.status}" before updating it.`
+            };
+          }
+        }
+      }
+
+      await crm.updateRecordStatus(await currentContact(ctx), args.reference, args.status);
       return { success: true };
-    },
-  },
-  {
-    name: 'crm_create_deal',
-    category: 'crm',
-    description: 'Open a deal/opportunity or order for the customer when they show clear purchase intent.',
-    parameters: {
-      type: 'object',
-      properties: { title: str('What is being sold'), value: { type: 'number', description: 'Estimated value' }, currency: str('3-letter currency code, default INR'), notes: str('Deal notes') },
-      required: ['title'],
-      additionalProperties: false,
-    },
-    handler: async (args, ctx) => {
-      const deal = await crm.createDeal({ ...args, workspaceId: ctx.workspaceId, contactId: await currentContact(ctx) });
-      return { success: true, dealId: deal.id };
-    },
-  },
-  {
-    name: 'crm_update_deal',
-    category: 'crm',
-    description: 'Update a deal of the current customer: set status open/won/lost, value or notes. Use the id from crm_get_contact.',
-    parameters: {
-      type: 'object',
-      properties: { dealId: str('Deal id'), status: { type: 'string', enum: ['open', 'won', 'lost'] }, value: { type: 'number' }, notes: str('Deal notes') },
-      required: ['dealId'],
-      additionalProperties: false,
-    },
-    handler: async (args, ctx) => {
-      const { dealId, ...fields } = args;
-      const deal = await crm.updateDeal(await currentContact(ctx), dealId, fields);
-      return { success: true, status: deal.status, value: deal.value };
     },
   },
 ];
@@ -231,14 +237,72 @@ const generalTools = [
     },
   },
   {
+    name: 'check_request_status',
+    category: 'general',
+    description: 'Check the status of any request, booking, complaint or service using its reference code (e.g. "BOO-JK6T9"). Use this when the customer asks "what is the status of my request / booking / complaint?" and provides a reference code. Never guess a status — always call this tool.',
+    parameters: {
+      type: 'object',
+      properties: { reference: str('The reference code provided by the customer, e.g. "BOO-JK6T9"') },
+      required: ['reference'],
+      additionalProperties: false,
+    },
+    handler: async (args, ctx) => {
+      const record = await crm.getRecordByReference(args.reference, ctx.automationId);
+      if (!record) {
+        return {
+          found: false,
+          message: `No request found with reference "${args.reference}". Please check the code and try again, or contact our team for help.`,
+        };
+      }
+      const statusLabel = { open: 'Pending — our team is working on it', done: 'Completed', cancelled: 'Cancelled' }[record.status] || record.status;
+      return {
+        found: true,
+        reference: record.reference,
+        type: record.type,
+        title: record.title,
+        status: record.status,
+        statusLabel,
+        dueDate: record.dueDate,
+        submittedAt: record.createdAt,
+      };
+    },
+  },
+  {
+    name: 'check_my_requests',
+    category: 'general',
+    description: 'List all open requests, bookings, complaints or follow-ups registered for the current customer in this conversation. Use when the customer asks "what requests do I have?" or "show me my bookings" without providing a specific reference code.',
+    handler: async (_args, ctx) => {
+      const records = await dbService.prisma.automationRecord.findMany({
+        where: { contactId: await currentContact(ctx), status: 'open' },
+        orderBy: { createdAt: 'desc' },
+        take: 10,
+        select: { reference: true, title: true, type: true, status: true, dueDate: true, createdAt: true },
+      });
+      if (!records.length) {
+        return { found: false, message: 'No open requests found for your account.' };
+      }
+      return {
+        found: true,
+        requests: records.map((r) => ({
+          reference: r.reference || '(legacy — no reference)',
+          type: r.type,
+          title: r.title,
+          status: r.status,
+          dueDate: r.dueDate,
+          submittedAt: r.createdAt,
+        })),
+      };
+    },
+  },
+  {
     name: 'request_human_handoff',
     category: 'general',
     description: 'Transfer the conversation to a human team member when the customer asks for a person, is upset, or the request is outside what you can do. After calling it, tell the customer a team member will reach out.',
     parameters: { type: 'object', properties: { reason: str('Why a human is needed') }, required: ['reason'], additionalProperties: false },
     handler: async (args, ctx) => {
       const contactId = await currentContact(ctx);
-      await crm.logActivity(contactId, 'handoff', `Handed off to human: ${args.reason}`, null, 'ai');
-      await crm.createTask({ workspaceId: ctx.workspaceId, contactId, title: 'Customer needs human assistance', description: args.reason, kind: 'callback' });
+      await crm.logActivity(ctx.automationId, contactId, null, 'handoff', `Handed off to human: ${args.reason}`, null, 'ai');
+      await crm.createRecord({ automationId: ctx.automationId, contactId, title: 'Customer needs human assistance', fields: { reason: args.reason }, type: 'callback' });
       if (ctx.onHandoff) await ctx.onHandoff(args.reason);
       return { success: true, message: 'Conversation transferred. Tell the customer a team member will contact them shortly.' };
     },

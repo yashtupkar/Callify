@@ -9,7 +9,7 @@ const JWT_EXPIRES_IN = '7d';
 
 function signToken(user) {
   return jwt.sign(
-    { sub: user.id, email: user.email, role: user.role },
+    { sub: user.id, email: user.email, role: user.role, workspaceId: user.workspaceId || null },
     JWT_SECRET,
     { expiresIn: JWT_EXPIRES_IN }
   );

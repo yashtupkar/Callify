@@ -87,26 +87,7 @@ class WhatsAppConversationManager {
     });
 
     this.llm.on('tool_calls', async (calls, fullReply) => {
-      for (const [index, call] of calls.entries()) {
-        if (!call.name) continue;
-        let args = {};
-        try {
-          args = call.argsStr.trim() ? JSON.parse(call.argsStr) : {};
-        } catch (error) {
-          console.error('[WhatsAppConversationManager] Invalid tool arguments:', error.message);
-        }
-        // Await the full handle() call including the LLM re-prompt it fires.
-        // Previously handle() fired generateResponse() without returning its
-        // promise, so the listener resolved before the re-prompt stream finished,
-        // leading to overlapping streams and transcript corruption.
-        await this.toolExecutor.handle(
-          call.name,
-          args,
-          index === 0 ? fullReply : '',
-          call.id,
-          index === calls.length - 1,
-        );
-      }
+      await this.toolExecutor.handleBatch(calls, fullReply);
     });
 
     this.llm.on('llm_error', (error) => {

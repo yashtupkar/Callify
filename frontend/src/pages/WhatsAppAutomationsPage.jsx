@@ -146,7 +146,7 @@ function ListView({
         </div>
       </div>
 
-      <WebhookBanner />
+    
 
       <div className="mb-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
         {[
@@ -251,28 +251,7 @@ function ListView({
   );
 }
 
-function WebhookBanner() {
-  return (
-    <div className="mb-5 flex flex-col gap-3 rounded-xl border border-sky-500/20 bg-sky-500/5 p-4 md:flex-row md:items-center md:justify-between">
-      <div>
-        <div className="flex items-center gap-2 font-medium">
-          <Globe className="h-4 w-4 text-sky-400" />
-          Meta WhatsApp Cloud API webhook URL
-        </div>
-        <p className="mt-1 text-xs text-zinc-400">
-          Configure this callback URL in your Meta App Dashboard under{" "}
-          <b className="text-zinc-300">WhatsApp → Configuration → Webhook</b>.
-        </p>
-      </div>
-      <div className="flex min-w-0 items-center gap-2">
-        <code className="min-w-0 flex-1 select-all truncate rounded-lg border border-[#26262b] bg-[#0c0c0f] px-3 py-1.5 font-mono text-xs">
-          {WEBHOOK_URL}
-        </code>
-        <CopyButton text={WEBHOOK_URL} />
-      </div>
-    </div>
-  );
-}
+
 
 function AutomationCard({ a, ruleCount, open, toggleStatus, navigate }) {
   const active = a.status === "active";

@@ -47,6 +47,9 @@ model WhatsAppAutomation {
   products         WhatsAppProduct[]
   faqs             WhatsAppFaq[]
   businessHours    WhatsAppBusinessHour[]
+  contacts         AutomationContact[]
+  records          AutomationRecord[]
+  activities       AutomationActivity[]
 
   @@index([workspaceId, status])
 }
@@ -265,7 +268,80 @@ model Workspace {
   callSessions        CallSession[]
   whatsAppInstances   WhatsAppInstance[]
   whatsAppAutomations WhatsAppAutomation[]
+  users               User[]
 }
+
+// ─── Automation CRM ─────────────────────────────────────────────────────────────
+
+model AutomationContact {
+  id            String    @id @default(uuid())
+  automationId  String
+  waId          String
+  name          String?
+  email         String?
+  company       String?
+  city          String?
+  stage         String    @default("new")
+  source        String    @default("whatsapp")
+  tags          String[]  @default([])
+  customFields  Json?
+  optedOut      Boolean   @default(false)
+  messageCount  Int       @default(0)
+  lastMessageAt DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  automation WhatsAppAutomation   @relation(fields: [automationId], references: [id], onDelete: Cascade)
+  activities AutomationActivity[]
+  records    AutomationRecord[]
+
+  @@unique([automationId, waId])
+  @@index([automationId, stage])
+}
+
+model AutomationActivity {
+  id           String   @id @default(uuid())
+  automationId String
+  contactId    String
+  recordId     String?
+  type         String
+  content      String
+  metadata     Json?
+  createdBy    String   @default("ai")
+  createdAt    DateTime @default(now())
+
+  automation WhatsAppAutomation @relation(fields: [automationId], references: [id], onDelete: Cascade)
+  contact    AutomationContact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  record     AutomationRecord? @relation(fields: [recordId], references: [id], onDelete: SetNull)
+
+  @@index([contactId, createdAt])
+  @@index([automationId, type])
+}
+
+model AutomationRecord {
+  id           String    @id @default(uuid())
+  automationId String
+  contactId    String
+  type         String
+  title        String
+  reference    String
+  status       String    @default("open")
+  fields       Json?
+  dueDate      DateTime?
+  createdBy    String    @default("ai")
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  automation   WhatsAppAutomation    @relation(fields: [automationId], references: [id], onDelete: Cascade)
+  contact      AutomationContact    @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  activities   AutomationActivity[]
+
+  @@unique([automationId, reference])
+  @@index([automationId, type, status])
+  @@index([contactId])
+}
+
+
 
 model Agent {
   id                         String   @id @default(uuid())
@@ -410,11 +486,15 @@ enum UserRole {
 }
 
 model User {
-  id           String   @id @default(uuid())
-  email        String   @unique
+  id           String     @id @default(uuid())
+  workspaceId  String?
+  workspace    Workspace? @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
+  email        String     @unique
   passwordHash String
   name         String?
-  role         UserRole @default(user)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  role         UserRole   @default(user)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  @@index([workspaceId])
 }

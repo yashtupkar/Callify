@@ -29,15 +29,22 @@ class WhatsAppAutomationSessionStore {
     const session = await dbService.prisma.whatsAppAutomationSession.findUnique({
       where: { connectionId_contactWaId: { connectionId: connection.id, contactWaId } },
     });
-    if (!session || Date.now() - session.lastActivityAt.getTime() > this.ttlMs) return null;
+    if (!session) return null;
+    const isStale = Date.now() - session.lastActivityAt.getTime() > this.ttlMs;
+    // If stale, return session with recent transcript history rather than nulling and wiping
+    const rawTranscript = Array.isArray(session.transcript) ? session.transcript : [];
+    const transcript = isStale ? rawTranscript.slice(-20) : rawTranscript;
     return {
+      id: session.id,
+      sessionId: session.id,
       connectionId: connection.id,
       automationId: automation.id,
       contactWaId,
-      transcript: Array.isArray(session.transcript) ? session.transcript : [],
+      transcript,
       status: session.status,
       createdAt: session.createdAt.getTime(),
       lastActivityAt: session.lastActivityAt.getTime(),
+      isStale,
     };
   }
   async set(connection, automation, contactWaId, value) {
@@ -53,11 +60,33 @@ class WhatsAppAutomationSessionStore {
       lastActivityAt: Date.now(),
     });
     try {
-      await dbService.prisma.whatsAppAutomationSession.upsert({
+      const record = await dbService.prisma.whatsAppAutomationSession.upsert({
         where: { connectionId_contactWaId: { connectionId: connection.id, contactWaId } },
-        create: { automationId: automation.id, connectionId: connection.id, contactWaId, transcript: value.conversationManager?.transcript || [] },
-        update: { lastActivityAt: now, transcript: value.conversationManager?.transcript || [] },
+        create: {
+          automationId: automation.id,
+          connectionId: connection.id,
+          contactWaId,
+          status: value.status || 'active',
+          transcript: value.conversationManager?.transcript || [],
+        },
+        update: {
+          lastActivityAt: now,
+          status: value.status || (value.conversationManager?.isHandoff ? 'human_handoff' : 'active'),
+          transcript: value.conversationManager?.transcript || [],
+        },
       });
+      if (record?.id) {
+        value.id = record.id;
+        value.sessionId = record.id;
+        const inMemory = this.sessions.get(key);
+        if (inMemory) inMemory.sessionId = record.id;
+        if (value.conversationManager) {
+          value.conversationManager.sessionId = record.id;
+          if (value.conversationManager.toolExecutor) {
+            value.conversationManager.toolExecutor.sessionId = record.id;
+          }
+        }
+      }
     } catch (err) {
       console.error('[WhatsAppAutomationSessionStore] persistence failed:', err.message);
       throw err;
