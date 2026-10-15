@@ -31,9 +31,9 @@ class WhatsAppAutomationSessionStore {
     });
     if (!session) return null;
     const isStale = Date.now() - session.lastActivityAt.getTime() > this.ttlMs;
-    // If stale, return session with recent transcript history rather than nulling and wiping
+    // If stale, start transcript fresh for the new conversation session
     const rawTranscript = Array.isArray(session.transcript) ? session.transcript : [];
-    const transcript = isStale ? rawTranscript.slice(-20) : rawTranscript;
+    const transcript = isStale ? [] : rawTranscript;
     return {
       id: session.id,
       sessionId: session.id,

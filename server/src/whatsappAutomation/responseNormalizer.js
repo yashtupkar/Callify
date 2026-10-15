@@ -272,6 +272,9 @@ function validateButtonResponse(obj) {
   if (obj.header && typeof obj.header === 'string') {
     result.header = obj.header.trim().slice(0, 60);
   }
+  if (obj.headerMedia && typeof obj.headerMedia === 'object' && obj.headerMedia.url) {
+    result.headerMedia = obj.headerMedia;
+  }
   if (obj.footer && typeof obj.footer === 'string') {
     result.footer = obj.footer.trim().slice(0, 60);
   }
