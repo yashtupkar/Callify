@@ -144,8 +144,8 @@ class AutoReplyService {
     const GREETINGS = new Set(['hi', 'hello', 'hey', 'start', 'restart', 'menu', 'welcome', 'namaste', 'hola']);
     const isGreeting = GREETINGS.has(cleanUserText);
 
-    // Welcome rules answer a contact's first message or any conversational greeting (e.g. "Hi", "Hello", "Start")
-    if (isFirstMessage || isGreeting) {
+    // Welcome rules answer a contact's first message
+    if (isFirstMessage) {
       const welcome = this.rules.find((r) => r.triggerType === 'first_message');
       if (welcome) return { matched: true, rule: welcome, response: this.buildResponse(welcome) };
     }

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
-import { Loader2, Search, X, CheckCircle2, Plus } from 'lucide-react';
+import { Loader2, Search, X, CheckCircle2, Plus, ArrowLeft } from 'lucide-react';
 import { SERVER_URL } from '@/lib/constants';
 
 const API = `${SERVER_URL}/api/whatsapp-automation/crm`;
@@ -109,6 +110,7 @@ function ContactPanel({ contactId, onClose, onChanged }) {
 }
 
 export default function WhatsAppCrmPage() {
+  const navigate = useNavigate();
   const [summary, setSummary] = useState(null);
   const [contacts, setContacts] = useState([]);
   const [stage, setStage] = useState('');
@@ -137,6 +139,14 @@ export default function WhatsAppCrmPage() {
 
   return (
     <div className="mx-auto max-w-6xl p-6">
+      <button
+        type="button"
+        onClick={() => navigate('/whatsapp')}
+        className="mb-4 inline-flex items-center gap-1.5 text-xs text-muted-foreground transition hover:text-foreground"
+      >
+        <ArrowLeft className="h-4 w-4" />
+        Back to WhatsApp Automations
+      </button>
       <h1 className="text-2xl font-semibold">WhatsApp CRM</h1>
       <p className="text-sm text-muted-foreground">Every customer, note, follow-up and deal captured by your WhatsApp automations.</p>
 

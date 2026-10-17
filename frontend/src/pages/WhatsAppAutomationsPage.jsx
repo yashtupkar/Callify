@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { MessageCircle, Plus, Pencil, Globe, RefreshCw, Phone, Terminal, Search, Pause, Bot } from "lucide-react";
+import { MessageCircle, Plus, Pencil, Globe, RefreshCw, Phone, Terminal, Search, Pause, Bot, Users } from "lucide-react";
 import {
   WEBHOOK_URL,
   cn,
@@ -139,6 +139,14 @@ function ListView({
               className={cn("h-4 w-4", refreshing && "animate-spin")}
             />
           </Button>
+          <Button
+            onClick={() => navigate("/whatsapp/crm")}
+            className="border-sky-500/30 bg-sky-500/10 text-sky-300 hover:bg-sky-500/20"
+            title="Open global WhatsApp CRM contacts & follow-ups"
+          >
+            <Users className="h-4 w-4" />
+            Global CRM
+          </Button>
           <Button variant="primary" onClick={() => navigate("/whatsapp/setup")}>
             <Plus className="h-4 w-4" />
             New automation
@@ -258,109 +266,190 @@ function AutomationCard({ a, ruleCount, open, toggleStatus, navigate }) {
   const connections = a.connections || [];
   const enabledTools = toolsOf(a).filter((t) => t.enabled).length;
   const updated = ago(a.updatedAt || a.createdAt);
+
   return (
     <div
       role="button"
       tabIndex={0}
-      onClick={() => open(a.id)}
+      onClick={() => open(a.id, "overview")}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
-          open(a.id);
+          open(a.id, "overview");
         }
       }}
-      className="group cursor-pointer rounded-xl border border-[#26262b] bg-[#111114] p-5 transition hover:-translate-y-px hover:border-sky-500/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/50"
+      className="group relative flex flex-col justify-between rounded-2xl border border-[#26262b] bg-[#111114] p-5 transition duration-200 hover:-translate-y-0.5 hover:border-sky-500/60 hover:shadow-xl hover:shadow-sky-500/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/50"
     >
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <h3 className="truncate text-base font-semibold text-zinc-50">
-            {a.name}
-          </h3>
-          <p className="mt-0.5 truncate text-xs text-zinc-500">
-            {a.businessName || "WhatsApp Automation"} · {langLabel(a.language)}
-          </p>
-        </div>
-        <Badge tone={active ? "green" : "amber"}>
-          <span
-            className={cn(
-              "h-1.5 w-1.5 rounded-full",
-              active ? "bg-emerald-400" : "bg-amber-400",
-            )}
-          />
-          {active ? "Active" : a.status === "draft" ? "Draft" : "Paused"}
-        </Badge>
-      </div>
-
-      <div className="my-4 min-h-[52px] space-y-1.5">
-        {connections.length ? (
-          connections.slice(0, 2).map((c) => (
-            <div
-              key={c.id}
-              className="flex items-center gap-2 rounded-lg border border-[#26262b] bg-[#16161a] px-2.5 py-1.5"
-            >
-              <Phone className="h-3.5 w-3.5 shrink-0 text-sky-400" />
-              <span className="truncate font-mono text-xs">
-                {c.phoneNumber}
-              </span>
-              <Badge
-                tone={c.provider === "cloud_api" ? "sky" : "green"}
-                className="ml-auto text-[10px] uppercase"
-              >
-                {providerLabel(c.provider)}
-              </Badge>
-            </div>
-          ))
-        ) : (
-          <p className="rounded-lg border border-dashed border-[#26262b] px-3 py-2.5 text-center text-xs text-zinc-500">
-            No WhatsApp number connected
-          </p>
-        )}
-        {connections.length > 2 && (
-          <p className="text-xs text-zinc-500">
-            +{connections.length - 2} more
-          </p>
-        )}
-      </div>
-
-      <div className="grid grid-cols-3 gap-2 border-y border-dashed border-[#26262b] py-3 text-center">
-        {[
-          ["Numbers", connections.length],
-          ["Auto-replies", ruleCount],
-          ["Tools", enabledTools],
-        ].map(([label, value]) => (
-          <div key={label}>
-            <b className="block text-lg tabular-nums">{value}</b>
-            <small className="text-[11px] text-zinc-500">{label}</small>
+      <div>
+        {/* Card Header */}
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <h3 className="truncate text-base font-semibold text-zinc-50 transition-colors group-hover:text-sky-300">
+              {a.name}
+            </h3>
+            <p className="mt-0.5 truncate text-xs text-zinc-400">
+              {a.businessName || "WhatsApp Automation"} · {langLabel(a.language)}
+            </p>
           </div>
-        ))}
+          <Badge tone={active ? "green" : a.status === "draft" ? "neutral" : "amber"}>
+            <span
+              className={cn(
+                "h-2 w-2 rounded-full",
+                active
+                  ? "animate-pulse bg-emerald-400"
+                  : a.status === "draft"
+                  ? "bg-zinc-500"
+                  : "bg-amber-400"
+              )}
+            />
+            {active ? "Active" : a.status === "draft" ? "Draft" : "Paused"}
+          </Badge>
+        </div>
+
+        {/* Connected Numbers / Channels */}
+        <div className="my-4 min-h-[52px] space-y-1.5">
+          {connections.length ? (
+            connections.slice(0, 2).map((c) => (
+              <div
+                key={c.id}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  open(a.id, "channels");
+                }}
+                className="flex items-center gap-2 rounded-lg border border-[#26262b] bg-[#16161a] px-3 py-2 text-xs transition hover:border-[#3a3a44]"
+                title="Manage this phone channel"
+              >
+                <Phone className="h-3.5 w-3.5 shrink-0 text-sky-400" />
+                <span className="truncate font-mono font-medium text-zinc-200">
+                  {c.phoneNumber}
+                </span>
+                <Badge
+                  tone={c.provider === "cloud_api" ? "sky" : "green"}
+                  className="ml-auto text-[10px] font-semibold uppercase tracking-wider"
+                >
+                  {providerLabel(c.provider)}
+                </Badge>
+              </div>
+            ))
+          ) : (
+            <div
+              onClick={(e) => {
+                e.stopPropagation();
+                open(a.id, "channels");
+              }}
+              className="flex cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-dashed border-[#2b2b32] bg-[#141418] px-3 py-2.5 text-xs text-zinc-400 transition hover:border-sky-500/50 hover:text-sky-300"
+              title="Click to connect a WhatsApp number"
+            >
+              <Phone className="h-3.5 w-3.5 text-sky-400" />
+              <span>Connect phone number</span>
+            </div>
+          )}
+          {connections.length > 2 && (
+            <p className="text-right text-[11px] text-zinc-500">
+              +{connections.length - 2} more connected numbers
+            </p>
+          )}
+        </div>
+
+        {/* Quick Metrics Bar */}
+        <div className="grid grid-cols-3 gap-2 border-y border-[#202025] py-3 text-center">
+          <div
+            onClick={(e) => {
+              e.stopPropagation();
+              open(a.id, "channels");
+            }}
+            className="cursor-pointer rounded-lg py-1 transition hover:bg-[#18181d]"
+            title="View channels"
+          >
+            <b className="block text-base font-semibold tabular-nums text-zinc-100">
+              {connections.length}
+            </b>
+            <span className="text-[11px] text-zinc-500">Numbers</span>
+          </div>
+
+          <div
+            onClick={(e) => {
+              e.stopPropagation();
+              open(a.id, "rules");
+            }}
+            className="cursor-pointer rounded-lg py-1 transition hover:bg-[#18181d]"
+            title="View auto-reply rules"
+          >
+            <b className="block text-base font-semibold tabular-nums text-zinc-100">
+              {ruleCount}
+            </b>
+            <span className="text-[11px] text-zinc-500">Auto-replies</span>
+          </div>
+
+          <div
+            onClick={(e) => {
+              e.stopPropagation();
+              open(a.id, "settings");
+            }}
+            className="cursor-pointer rounded-lg py-1 transition hover:bg-[#18181d]"
+            title="View enabled tools"
+          >
+            <b className="block text-base font-semibold tabular-nums text-zinc-100">
+              {enabledTools}
+            </b>
+            <span className="text-[11px] text-zinc-500">AI Tools</span>
+          </div>
+        </div>
       </div>
 
-      <div
-        className="mt-3 flex items-center gap-2"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <Button
-          size="sm"
-          onClick={() => navigate(`/admin/whatsapp-automations/${a.id}/logs`)}
+      {/* Fast Switching Action Toolbar */}
+      <div className="mt-4 pt-2">
+        <div
+          className="flex items-center gap-1.5"
+          onClick={(e) => e.stopPropagation()}
         >
-          <Terminal className="h-3.5 w-3.5" />
-          Logs
-        </Button>
-        <Button size="sm" onClick={() => open(a.id, "settings")}>
-          <Pencil className="h-3.5 w-3.5" />
-          Edit
-        </Button>
-        <span className="ml-auto">
-          <Toggle
-            ariaLabel={active ? `Pause ${a.name}` : `Resume ${a.name}`}
-            checked={active}
-            onChange={() => toggleStatus(a)}
-          />
-        </span>
+          {/* Direct CRM Jump */}
+          <Button
+            size="sm"
+            onClick={() => open(a.id, "crm")}
+            className="border-sky-500/25 bg-sky-500/10 px-2.5 text-xs text-sky-300 hover:border-sky-500/50 hover:bg-sky-500/20"
+            title="Open CRM & Leads captured by this bot"
+          >
+            <Users className="h-3.5 w-3.5" />
+            CRM
+          </Button>
+
+          {/* Direct Live Logs Jump */}
+          <Button
+            size="sm"
+            onClick={() => open(a.id, "logs")}
+            className="border-emerald-500/25 bg-emerald-500/10 px-2.5 text-xs text-emerald-300 hover:border-emerald-500/50 hover:bg-emerald-500/20"
+            title="Open Live Logs & real-time traffic"
+          >
+            <Terminal className="h-3.5 w-3.5" />
+            Logs
+          </Button>
+
+          {/* Edit / Configure */}
+          <Button
+            size="sm"
+            onClick={() => open(a.id, "settings")}
+            className="px-2.5 text-xs"
+            title="Edit configuration & prompts"
+          >
+            <Pencil className="h-3.5 w-3.5" />
+            Edit
+          </Button>
+
+          {/* Status Toggle */}
+          <div className="ml-auto flex items-center">
+            <Toggle
+              ariaLabel={active ? `Pause ${a.name}` : `Resume ${a.name}`}
+              checked={active}
+              onChange={() => toggleStatus(a)}
+            />
+          </div>
+        </div>
+
+        {updated && (
+          <p className="mt-2 text-[10px] text-zinc-600">Updated {updated}</p>
+        )}
       </div>
-      {updated && (
-        <p className="mt-2 text-[11px] text-zinc-600">Updated {updated}</p>
-      )}
     </div>
   );
 }

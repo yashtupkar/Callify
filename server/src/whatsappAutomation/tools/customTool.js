@@ -51,6 +51,11 @@ function buildCustomTool(rawConfig) {
     description: 'Set to true ONLY AFTER you have presented a summary of the details to the user and they have explicitly confirmed. You MUST NOT call this tool until the user has confirmed.'
   };
 
+  properties.rebook = {
+    type: 'boolean',
+    description: 'Set to true if the customer has an older open request and explicitly confirmed they want to book again or create a fresh request.'
+  };
+
   return {
     name: config.name,
     category: 'custom',
@@ -197,6 +202,57 @@ function buildCustomTool(rawConfig) {
         }
       }
 
+      // 3.5 Check for existing open records of the same type/category
+      const autoId = ctx?.automationId || ctx?.workspaceId;
+      if (autoId && (ctx?.contactWaId || ctx?.crmContactId)) {
+        try {
+          const openRecord = await crm.findActiveOpenRecord({
+            automationId: autoId,
+            contactWaId: ctx.contactWaId,
+            contactId: ctx.crmContactId,
+            type: config.name,
+            title: config.title,
+          });
+
+          if (openRecord) {
+            const isOld = crm.isRecordOld(openRecord);
+            if (!isOld) {
+              return {
+                success: false,
+                error: 'EXISTING_OPEN_RECORD',
+                hasOpenRecord: true,
+                isOld: false,
+                reference: openRecord.reference,
+                type: openRecord.type,
+                title: openRecord.title,
+                createdAt: openRecord.createdAt,
+                dueDate: openRecord.dueDate,
+                message: `You already have an open ${config.title || 'booking/request'} (Reference: ${openRecord.reference}). Our team is working on it and will reach out to you shortly. You do not need to submit another one.`,
+              };
+            }
+
+            const hasConfirmedRebook = args.rebook === true || crm.hasUserConfirmedRebook(ctx?.getRecentTranscript?.() || []);
+            if (!hasConfirmedRebook) {
+              const dateStr = crm.formatRecordDate(openRecord.createdAt, ctx.timezone);
+              return {
+                success: false,
+                error: 'EXISTING_OLD_RECORD',
+                hasOpenRecord: true,
+                isOld: true,
+                reference: openRecord.reference,
+                type: openRecord.type,
+                title: openRecord.title,
+                createdAt: openRecord.createdAt,
+                dueDate: openRecord.dueDate,
+                message: `The customer has an existing open ${config.title || 'request'} from ${dateStr} (Reference: ${openRecord.reference}). Ask the customer if they would like to book again / submit a new request or follow up on their previous request.`,
+              };
+            }
+          }
+        } catch (openErr) {
+          console.warn('[CustomTool] Error checking active open record:', openErr.message);
+        }
+      }
+
       // 4. Perform CRM writes if context has workspaceId and contactWaId
       const contactData = {};
       for (const field of config.fields) {
@@ -207,7 +263,6 @@ function buildCustomTool(rawConfig) {
 
       let contactId = null;
       let createdRecord = null;
-      const autoId = ctx?.automationId || ctx?.workspaceId;
       if (autoId && ctx?.contactWaId) {
         contactId = await crm.ensureContact({
           automationId: autoId,
@@ -269,10 +324,12 @@ function buildCustomTool(rawConfig) {
       }
 
       const activeRef = createdRecord?.reference || crm.generateReference(slug(config.name, 3));
+      const defaultReply = `✅ *${config.title} Confirmed!*\n\n🏷️ *Reference ID:* ${activeRef}\n\n💬 Our team has received your details and will follow up in a short time. Thank you! 🙏`;
+      const replyTemplate = config.replyMessage || defaultReply;
       return {
         success: true,
         reference: activeRef,
-        message: (config.replyMessage || 'Your request has been recorded and our team will follow up.').replace(/\{\{\s*ref\s*\}\}/gi, activeRef),
+        message: replyTemplate.replace(/\{\{\s*ref\s*\}\}/gi, activeRef),
       };
     },
   };

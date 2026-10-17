@@ -5,6 +5,7 @@ const { UsageTracker } = require('../services/UsageTracker');
 const { normalizeWhatsAppResponse, extractPlainText } = require('./responseNormalizer');
 const { dbService } = require('../services/DatabaseService');
 const { WhatsAppAutomationLogService } = require('./logService');
+const crm = require('./tools/crmService');
 
 /**
  * Text-only conversation runtime for standalone WhatsApp automations.
@@ -112,13 +113,59 @@ class WhatsAppConversationManager {
   }
 
   async handleUserUtterance(text, messageMeta = null) {
+    const content = String(text || '').trim();
+    if (!content) return;
+
     if (this.isHandoff) {
-      console.log('[WhatsAppConversationManager] Skipping AI response — conversation is in human handoff mode.');
+      // Check if customer wants to resume bot/automated assistance
+      const resumeKeywords = new Set(['bot', 'restart', 'menu', 'ai', 'start', 'resume', 'assistant']);
+      const cleanLower = content.toLowerCase();
+      if (resumeKeywords.has(cleanLower) || cleanLower === 'talk to bot' || cleanLower === 'automated') {
+        this.isHandoff = false;
+        this.isActive = true;
+        if (this.channel?.instanceId && this.channel?.contactWaId) {
+          await dbService.prisma.whatsAppAutomationSession.updateMany({
+            where: { connectionId: this.channel.instanceId, contactWaId: this.channel.contactWaId },
+            data: { status: 'active' },
+          }).catch(() => {});
+        }
+        const resumeMsg = normalizeWhatsAppResponse({
+          _type: 'text',
+          text: '🤖 *Automated Assistant Resumed*\n\nHow can I help you today? Feel free to ask about our services, bookings, complaints, or any other query.',
+        });
+        this.transcript.push({ role: 'assistant', content: extractPlainText(resumeMsg), richResponse: resumeMsg });
+        await this.channel.sendResponse(resumeMsg);
+        return;
+      }
+
+      // Record customer message in transcript while in handoff mode
+      this.transcript.push({ role: 'user', content });
+
+      // Log activity to CRM so human agent sees it on the timeline
+      const autoId = this.automationId || this.channel?.automationId;
+      const waId = this.contactWaId || this.channel?.contactWaId;
+      if (autoId && waId) {
+        crm.ensureContact({ automationId: autoId, waId }).then((c) => {
+          if (c) crm.logActivity(autoId, c.id, null, 'handoff_message', content, null, 'customer');
+        }).catch(() => {});
+      }
+
+      // Reassure customer with an acknowledgment (throttled to avoid spamming on rapid messages)
+      const now = Date.now();
+      const lastHandoffAck = this._lastHandoffAckTime || 0;
+      if (now - lastHandoffAck > 30000) {
+        this._lastHandoffAckTime = now;
+        const ackMsg = normalizeWhatsAppResponse({
+          _type: 'text',
+          text: '📌 *Message Received*\n\nOur team has received your message and will connect with you in a short time. Please keep patience as our representatives reach out as soon as they are available. 🙏\n\n_(Reply *BOT* or *MENU* at any time if you wish to return to the automated assistant.)_',
+        });
+        this.transcript.push({ role: 'assistant', content: extractPlainText(ackMsg), richResponse: ackMsg });
+        await this.channel.sendResponse(ackMsg);
+      }
       return;
     }
 
-    const content = String(text || '').trim();
-    if (!this.isActive || !content) return;
+    if (!this.isActive) return;
 
     // Serialise concurrent LLM round-trips: wait for any ongoing generation
     // (including all tool re-prompts) to fully settle before starting a new one.
@@ -152,11 +199,31 @@ class WhatsAppConversationManager {
         }).catch(() => {}); // Fire and forget
       }
 
+      // Fetch open records for real-time customer context injection
+      let contextInjection = null;
+      try {
+        const autoId = this.automationId || this.channel?.automationId;
+        const waId = this.contactWaId || this.channel?.contactWaId;
+        if (autoId && waId) {
+          const openRecords = await crm.getOpenRecordsForWaId(autoId, waId);
+          if (openRecords && openRecords.length > 0) {
+            contextInjection = {
+              role: 'system',
+              content: crm.formatOpenRecordsPrompt(openRecords, this.timezone || 'Asia/Kolkata'),
+            };
+          }
+        }
+      } catch (openErr) {
+        // Non-fatal
+      }
+
+      this.toolExecutor.contextInjection = contextInjection;
+
       await this.llm.generateResponse(
         this.getRecentTranscript(),
         this.registry.getAllSchemas(),
         'auto',
-        null,    // contextInjection
+        contextInjection,
         false,   // allowAbort — session is already serialised by _generating guard
       );
     } finally {

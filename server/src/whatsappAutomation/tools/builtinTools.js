@@ -107,6 +107,7 @@ const contactTools = [
         type: str('The type of record (e.g. "booking", "lead", "complaint")'),
         fields: { type: 'object', description: 'Any collected details as JSON' },
         dueDate: str('When it is due, ISO 8601 date-time'),
+        rebook: { type: 'boolean', description: 'Set to true if customer has an older open record and explicitly confirmed they want to book again or submit a new request' },
       },
       required: ['title', 'type'],
       additionalProperties: false,
@@ -130,6 +131,55 @@ const contactTools = [
             };
           }
         }
+      }
+
+      // Check for existing open records of the same type/category
+      try {
+        const contactId = await currentContact(ctx);
+        const openRecord = await crm.findActiveOpenRecord({
+          automationId: ctx.automationId,
+          contactId,
+          contactWaId: ctx.contactWaId,
+          type: args.type,
+          title: args.title,
+        });
+
+        if (openRecord) {
+          const isOld = crm.isRecordOld(openRecord);
+          if (!isOld) {
+            return {
+              success: false,
+              error: 'EXISTING_OPEN_RECORD',
+              hasOpenRecord: true,
+              isOld: false,
+              reference: openRecord.reference,
+              type: openRecord.type,
+              title: openRecord.title,
+              createdAt: openRecord.createdAt,
+              dueDate: openRecord.dueDate,
+              message: `You already have an open ${openRecord.type || 'request'} (Reference: ${openRecord.reference}, "${openRecord.title}"). Our team is actively working on it and will reach out to you shortly.`,
+            };
+          }
+
+          const hasConfirmedRebook = args.rebook === true || crm.hasUserConfirmedRebook(ctx?.getRecentTranscript?.() || []);
+          if (!hasConfirmedRebook) {
+            const dateStr = crm.formatRecordDate(openRecord.createdAt, ctx.timezone);
+            return {
+              success: false,
+              error: 'EXISTING_OLD_RECORD',
+              hasOpenRecord: true,
+              isOld: true,
+              reference: openRecord.reference,
+              type: openRecord.type,
+              title: openRecord.title,
+              createdAt: openRecord.createdAt,
+              dueDate: openRecord.dueDate,
+              message: `The customer has an existing open ${openRecord.type || 'request'} from ${dateStr} (Reference: ${openRecord.reference}). Ask the customer if they would like to book again / submit a new request or follow up on their existing one.`,
+            };
+          }
+        }
+      } catch (err) {
+        console.warn('[crm_create_record] Error checking active open record:', err.message);
       }
 
       const record = await crm.createRecord({ ...args, automationId: ctx.automationId, contactId: await currentContact(ctx) });
@@ -290,6 +340,7 @@ const generalTools = [
           status: r.status,
           dueDate: r.dueDate,
           submittedAt: r.createdAt,
+          isOld: crm.isRecordOld(r),
         })),
       };
     },
@@ -304,7 +355,7 @@ const generalTools = [
       await crm.logActivity(ctx.automationId, contactId, null, 'handoff', `Handed off to human: ${args.reason}`, null, 'ai');
       await crm.createRecord({ automationId: ctx.automationId, contactId, title: 'Customer needs human assistance', fields: { reason: args.reason }, type: 'callback' });
       if (ctx.onHandoff) await ctx.onHandoff(args.reason);
-      return { success: true, message: 'Conversation transferred. Tell the customer a team member will contact them shortly.' };
+      return { success: true, message: '👥 *Connecting with Our Team*\n\nOur team has been notified and will connect with you in a short time. Please keep patience as our representatives will reach out as soon as they are available. 🙏\n\n_(Reply *BOT* or *MENU* at any time to resume automated assistance.)_' };
     },
   },
 ];

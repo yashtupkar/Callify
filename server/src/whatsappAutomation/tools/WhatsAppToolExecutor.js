@@ -88,7 +88,7 @@ class WhatsAppToolExecutor {
       this.getRecentTranscript(),
       exhausted ? [] : this.registry.getAllSchemas(),
       exhausted ? 'none' : 'auto',
-      null,
+      this.contextInjection || null,
       false,
     );
   }
@@ -111,6 +111,8 @@ class WhatsAppToolExecutor {
         'NEED_USER_CONFIRMATION',
         'UNPROVIDED_CUSTOMER_DETAILS',
         'MISSING_REQUIRED_FIELDS',
+        'EXISTING_OPEN_RECORD',
+        'EXISTING_OLD_RECORD',
       ];
       if (confirmationOrFieldErrors.includes(res.error)) {
         return true;
@@ -207,7 +209,7 @@ class WhatsAppToolExecutor {
       this.getRecentTranscript(),
       exhausted ? [] : this.registry.getAllSchemas(),
       exhausted ? 'none' : 'auto',
-      null,
+      this.contextInjection || null,
       false,
     );
   }

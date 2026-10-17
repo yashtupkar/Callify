@@ -57,10 +57,12 @@ export const responseTypes = [
   ["cta_url", "Text + website link"],
 ];
 export const tabs = [
-  ["overview", "Overview"],["crm", "CRM"],
+  ["overview", "Overview"],
+  ["crm", "CRM & Leads"],
+  ["logs", "Live Logs"],
   ["rules", "Auto-replies"],
-  ["settings", "Settings"],
   ["channels", "Channels"],
+  ["settings", "Settings"],
 ];
 
 export const createResponseDraft = (type = "text") => {

@@ -211,3 +211,289 @@ test('modifying details invalidates previous confirmation', async () => {
   assert.strictEqual(out.success, false);
   assert.strictEqual(out.error, 'NEED_USER_CONFIRMATION');
 });
+
+test('crmService: isRecordOld correctly identifies recent vs old records', () => {
+  const crm = require('../src/whatsappAutomation/tools/crmService');
+
+  // Record with future dueDate -> NOT old (active upcoming)
+  const futureRecord = {
+    createdAt: new Date(Date.now() - 2 * 60 * 60 * 1000), // 2 hours ago
+    dueDate: new Date(Date.now() + 24 * 60 * 60 * 1000), // tomorrow
+  };
+  assert.strictEqual(crm.isRecordOld(futureRecord), false);
+
+  // Record with past dueDate -> OLD (overdue)
+  const overdueRecord = {
+    createdAt: new Date(Date.now() - 48 * 60 * 60 * 1000),
+    dueDate: new Date(Date.now() - 2 * 60 * 60 * 1000), // 2 hours ago
+  };
+  assert.strictEqual(crm.isRecordOld(overdueRecord), true);
+
+  // Record without dueDate created 3 hours ago -> NOT old (< 24h)
+  const recentRecord = {
+    createdAt: new Date(Date.now() - 3 * 60 * 60 * 1000),
+  };
+  assert.strictEqual(crm.isRecordOld(recentRecord), false);
+
+  // Record without dueDate created 36 hours ago -> OLD (>= 24h)
+  const oldRecord = {
+    createdAt: new Date(Date.now() - 36 * 60 * 60 * 1000),
+  };
+  assert.strictEqual(crm.isRecordOld(oldRecord), true);
+});
+
+test('crmService: categorizeRecordType normalizes tool types and titles', () => {
+  const crm = require('../src/whatsappAutomation/tools/crmService');
+  assert.strictEqual(crm.categorizeRecordType('book_site_survey'), 'booking');
+  assert.strictEqual(crm.categorizeRecordType('Book Appointment'), 'booking');
+  assert.strictEqual(crm.categorizeRecordType('doctor_visit'), 'booking');
+  assert.strictEqual(crm.categorizeRecordType('register_complaint'), 'complaint');
+  assert.strictEqual(crm.categorizeRecordType('Customer Issue'), 'complaint');
+  assert.strictEqual(crm.categorizeRecordType('callback_request'), 'callback');
+  assert.strictEqual(crm.categorizeRecordType('create_lead'), 'lead');
+});
+
+test('crmService: hasUserConfirmedRebook detects rebooking intent', () => {
+  const crm = require('../src/whatsappAutomation/tools/crmService');
+
+  // Explicit rebook phrase
+  assert.strictEqual(crm.hasUserConfirmedRebook([
+    { role: 'user', content: 'Please book again' },
+  ]), true);
+
+  assert.strictEqual(crm.hasUserConfirmedRebook([
+    { role: 'user', content: 'I want to rebook for tomorrow' },
+  ]), true);
+
+  // Rebook after assistant offered option
+  const transcriptAfterPrompt = [
+    { role: 'assistant', content: 'You have an open booking from 3 days ago. Would you like to book again or follow up?' },
+    { role: 'user', content: 'Yes, please' },
+  ];
+  assert.strictEqual(crm.hasUserConfirmedRebook(transcriptAfterPrompt), true);
+
+  // User declining rebook
+  const transcriptDeclined = [
+    { role: 'assistant', content: 'You have an open booking from 3 days ago. Would you like to book again or follow up?' },
+    { role: 'user', content: 'No, just check status' },
+  ];
+  assert.strictEqual(crm.hasUserConfirmedRebook(transcriptDeclined), false);
+});
+
+test('custom tool: blocks duplicate booking when recent open record exists', async () => {
+  const { buildCustomTool } = require('../src/whatsappAutomation/tools/customTool');
+  const crm = require('../src/whatsappAutomation/tools/crmService');
+
+  const tool = buildCustomTool({
+    name: 'book_service',
+    title: 'Book Service',
+    fields: [{ label: 'Name' }, { label: 'Address' }],
+  });
+
+  const originalFind = crm.findActiveOpenRecord;
+  const originalEnsure = crm.ensureContact;
+  try {
+    crm.ensureContact = async () => ({ id: 'contact_1' });
+    // Mock open record: recent (created 2 hours ago)
+    crm.findActiveOpenRecord = async () => ({
+      reference: 'BOO-RECENT-123',
+      type: 'book_service',
+      title: 'Book Service',
+      status: 'open',
+      createdAt: new Date(Date.now() - 2 * 60 * 60 * 1000),
+    });
+
+    const transcript = [
+      { role: 'user', content: 'Name: Yash, Address: 12 Main St' },
+      { role: 'assistant', content: 'Summary: Yash at 12 Main St. Confirm?' },
+      { role: 'user', content: 'Yes, confirm' },
+    ];
+
+    const res = await tool.handler(
+      { name: 'Yash', address: '12 Main St' },
+      {
+        getRecentTranscript: () => transcript,
+        contactName: 'Yash',
+        contactWaId: '919876543210',
+        automationId: 'auto_1',
+      }
+    );
+
+    assert.strictEqual(res.success, false);
+    assert.strictEqual(res.error, 'EXISTING_OPEN_RECORD');
+    assert.strictEqual(res.hasOpenRecord, true);
+    assert.strictEqual(res.isOld, false);
+    assert.match(res.message, /already have an open/i);
+    assert.match(res.message, /BOO-RECENT-123/);
+    assert.match(res.message, /team.*reach out/i);
+  } finally {
+    crm.findActiveOpenRecord = originalFind;
+    crm.ensureContact = originalEnsure;
+  }
+});
+
+test('custom tool: offers option to rebook when open record is older, and allows rebook when confirmed', async () => {
+  const { buildCustomTool } = require('../src/whatsappAutomation/tools/customTool');
+  const crm = require('../src/whatsappAutomation/tools/crmService');
+
+  const tool = buildCustomTool({
+    name: 'book_appointment',
+    title: 'Book Appointment',
+    fields: [{ label: 'Name' }, { label: 'Address' }],
+  });
+
+  const originalFind = crm.findActiveOpenRecord;
+  const originalEnsure = crm.ensureContact;
+  const originalCreateRecord = crm.createRecord;
+  try {
+    crm.ensureContact = async () => ({ id: 'contact_1' });
+    crm.createRecord = async (data) => ({ reference: 'BOO-NEW-999', ...data });
+
+    // Mock open record: older (created 3 days ago)
+    crm.findActiveOpenRecord = async () => ({
+      reference: 'BOO-OLD-456',
+      type: 'book_appointment',
+      title: 'Book Appointment',
+      status: 'open',
+      createdAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000),
+    });
+
+    // 1. Without rebook confirmation: should reject with EXISTING_OLD_RECORD
+    const transcriptWithoutRebook = [
+      { role: 'user', content: 'Name: Yash, Address: 12 Main St' },
+      { role: 'assistant', content: 'Summary: Yash at 12 Main St. Confirm?' },
+      { role: 'user', content: 'Yes, proceed' },
+    ];
+
+    const resOld = await tool.handler(
+      { name: 'Yash', address: '12 Main St' },
+      {
+        getRecentTranscript: () => transcriptWithoutRebook,
+        contactName: 'Yash',
+        contactWaId: '919876543210',
+        automationId: 'auto_1',
+      }
+    );
+
+    assert.strictEqual(resOld.success, false);
+    assert.strictEqual(resOld.error, 'EXISTING_OLD_RECORD');
+    assert.strictEqual(resOld.isOld, true);
+    assert.match(resOld.message, /existing open/i);
+    assert.match(resOld.message, /book again/i);
+
+    // 2. With rebook confirmation: should succeed!
+    const transcriptWithRebook = [
+      ...transcriptWithoutRebook,
+      { role: 'assistant', content: 'You have an open booking BOO-OLD-456. Would you like to book again?' },
+      { role: 'user', content: 'Yes, please book again' },
+    ];
+
+    const resRebooked = await tool.handler(
+      { name: 'Yash', address: '12 Main St' },
+      {
+        getRecentTranscript: () => transcriptWithRebook,
+        contactName: 'Yash',
+        contactWaId: '919876543210',
+        automationId: 'auto_1',
+      }
+    );
+
+    assert.strictEqual(resRebooked.success, true);
+    assert.strictEqual(resRebooked.reference, 'BOO-NEW-999');
+  } finally {
+    crm.findActiveOpenRecord = originalFind;
+    crm.ensureContact = originalEnsure;
+    crm.createRecord = originalCreateRecord;
+  }
+});
+
+test('crm_create_record: enforces existing open booking / complaint checks', async () => {
+  const { BUILT_IN_TOOLS } = require('../src/whatsappAutomation/tools/builtinTools');
+  const crm = require('../src/whatsappAutomation/tools/crmService');
+  const createRecordTool = BUILT_IN_TOOLS.find((t) => t.name === 'crm_create_record');
+
+  const originalFind = crm.findActiveOpenRecord;
+  const originalEnsure = crm.ensureContact;
+  const originalCreate = crm.createRecord;
+
+  try {
+    crm.ensureContact = async () => ({ id: 'contact_1' });
+    crm.createRecord = async (data) => ({ reference: 'COM-NEW-111', ...data });
+
+    // 1. Recent open complaint exists -> blocks creation
+    crm.findActiveOpenRecord = async () => ({
+      reference: 'COM-101',
+      type: 'complaint',
+      title: 'Water leakage',
+      status: 'open',
+      createdAt: new Date(Date.now() - 60 * 60 * 1000), // 1 hour ago
+    });
+
+    const transcript = [
+      { role: 'user', content: 'I have a complaint about leaking pipes' },
+      { role: 'assistant', content: 'Summary: Complaint about water leakage. Confirm?' },
+      { role: 'user', content: 'Yes, confirm' },
+    ];
+
+    const resRecent = await createRecordTool.handler(
+      { title: 'Water leakage', type: 'complaint' },
+      {
+        automationId: 'auto_1',
+        contactWaId: '919876543210',
+        crmContactId: 'contact_1',
+        getRecentTranscript: () => transcript,
+      }
+    );
+
+    assert.strictEqual(resRecent.success, false);
+    assert.strictEqual(resRecent.error, 'EXISTING_OPEN_RECORD');
+    assert.match(resRecent.message, /already have an open/i);
+
+    // 2. Old open complaint exists -> offers re-file
+    crm.findActiveOpenRecord = async () => ({
+      reference: 'COM-OLD-001',
+      type: 'complaint',
+      title: 'Water leakage',
+      status: 'open',
+      createdAt: new Date(Date.now() - 48 * 60 * 60 * 1000), // 48 hours ago
+    });
+
+    const resOld = await createRecordTool.handler(
+      { title: 'Water leakage', type: 'complaint' },
+      {
+        automationId: 'auto_1',
+        contactWaId: '919876543210',
+        crmContactId: 'contact_1',
+        getRecentTranscript: () => transcript,
+      }
+    );
+
+    assert.strictEqual(resOld.success, false);
+    assert.strictEqual(resOld.error, 'EXISTING_OLD_RECORD');
+
+    // 3. User confirms rebooking / re-filing -> succeeds
+    const transcriptRefile = [
+      ...transcript,
+      { role: 'assistant', content: 'You have an open complaint COM-OLD-001. Would you like to file again?' },
+      { role: 'user', content: 'Yes, file again please' },
+    ];
+
+    const resSuccess = await createRecordTool.handler(
+      { title: 'Water leakage', type: 'complaint' },
+      {
+        automationId: 'auto_1',
+        contactWaId: '919876543210',
+        crmContactId: 'contact_1',
+        getRecentTranscript: () => transcriptRefile,
+      }
+    );
+
+    assert.strictEqual(resSuccess.success, true);
+    assert.strictEqual(resSuccess.reference, 'COM-NEW-111');
+  } finally {
+    crm.findActiveOpenRecord = originalFind;
+    crm.ensureContact = originalEnsure;
+    crm.createRecord = originalCreate;
+  }
+});
+

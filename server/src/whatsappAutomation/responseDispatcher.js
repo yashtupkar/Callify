@@ -161,7 +161,11 @@ async function sendWhatsAppResponse({ provider, recipient, response, context = {
  * Handles internal human handoff event.
  */
 async function handleHumanHandoff({ provider, recipient, response, context }) {
-  const messageText = response.message || "I'll connect you with our team. Please wait a moment.";
+  const defaultMsg = "👥 *Connecting with Our Team*\n\nOur team has been notified and will connect with you in a short time. Please keep patience as our representatives will reach out as soon as they are available. 🙏\n\n_(Reply *BOT* or *MENU* at any time if you wish to return to automated assistance.)_";
+  let messageText = response.message || defaultMsg;
+  if (messageText.toLowerCase().includes('wait a moment')) {
+    messageText = defaultMsg;
+  }
 
   try {
     // 1. Update session status if session object exists

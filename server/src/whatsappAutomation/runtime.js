@@ -80,6 +80,9 @@ async function getOrCreateSession({ automation, connection, contactWaId, contact
 
   const manager = new WhatsAppConversationManager(adapter, automation.providers || null);
   manager.sessionId = persisted?.id || null;
+  manager.automationId = automation.id;
+  manager.contactWaId = contactWaId;
+  manager.timezone = automation.timezone;
 
   // Only tools in this registry are exposed to the LLM or executable.
   const registry = buildRegistryForAutomation(automation);

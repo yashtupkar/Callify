@@ -18,6 +18,7 @@
  */
 
 const crypto = require('crypto');
+const { formatWhatsAppMarkdown } = require('./responseNormalizer');
 
 /**
  * Normalizes a recipient phone number into a clean E.164 string without '+'.
@@ -62,14 +63,14 @@ function buildMetaPayload({ recipient, response, context = {} }) {
         type: 'text',
         text: {
           preview_url: false,
-          body: response.text || '',
+          body: formatWhatsAppMarkdown(response.text || ''),
         },
       };
 
     case 'button': {
       const interactive = {
         type: 'button',
-        body: { text: response.body || '' },
+        body: { text: formatWhatsAppMarkdown(response.body || '') },
         action: {
           buttons: (response.buttons || []).slice(0, 3).map((b) => ({
             type: 'reply',
