@@ -1,7 +1,10 @@
 const { WhatsAppConversationManager } = require('./conversationManager');
-const { ToolRegistry } = require('../tools/ToolRegistry');
+const { buildRegistryForAutomation } = require('./tools');
+const crm = require('./tools/crmService');
+
 const { WhatsAppAutomationChannelAdapter } = require('./channelAdapter');
 const { buildWhatsAppPrompt } = require('./promptBuilder');
+const { normalizeWhatsAppResponse, extractPlainText } = require('./responseNormalizer');
 const { store } = require('./sessionStore');
 const { AutoReplyService } = require('./autoReplyService');
 const { WhatsAppAutomationLogService } = require('./logService');
@@ -61,69 +64,40 @@ function getIncomingLogMessage(message) {
 
 async function getOrCreateSession({ automation, connection, contactWaId, contactJid, provider, profileName }) {
   let entry = store.get(connection.id, contactWaId);
-  if (entry) { store.touch(connection.id, contactWaId); return entry; }
+  if (entry) {
+    store.touch(connection.id, contactWaId);
+    return { entry, isNew: false, persisted: null };
+  }
   const persisted = await store.load(connection, automation, contactWaId);
+  const isNew = !persisted;
 
   const adapter = new WhatsAppAutomationChannelAdapter({
     provider, contactWaId, contactJid, businessPhoneNumber: connection.phoneNumber, instanceId: connection.id,
     automationId: automation.id,
   });
   adapter.contactProfileName = profileName || null;
-  const manager = new WhatsAppConversationManager(adapter, automation.providers || null);
-  const registry = new ToolRegistry();
-  // The WhatsApp runtime uses the same internal CRM schemas as voice agents.
-  // ToolExecutor handles these names directly, so registering the schemas here
-  // gives the LLM a valid contract without creating a second tool system.
-  // Standalone WhatsApp automations are not linked to an Agent, so the
-  // legacy CRM executors cannot safely access availability or bookings.
-  // Explicit webhook tools remain available below and can provide those
-  // actions without relying on Agent-owned records.
-  if (automation.agentId) registry.injectInternalCrmTools();
-  const onboarding = automation.promptConfig?.onboarding || {};
-  const enabledToolNames = new Set(
-    (automation.tools || []).filter((tool) => tool.enabled !== false).map((tool) => tool.name)
-  );
-  const agentDependentTools = new Set([
-    'check_availability', 'create_booking', 'get_bookings', 'cancel_booking',
-    'reschedule_booking', 'transfer_call', 'send_followup_email', 'send_whatsapp',
-    'get_pricing',
-  ]);
-  for (const name of ['check_availability', 'create_booking', 'get_bookings', 'cancel_booking', 'reschedule_booking', 'transfer_call', 'send_followup_email', 'send_whatsapp', 'get_pricing']) {
-    if (!enabledToolNames.has(name)) registry.remove(name);
-  }
-  const collectionFields = onboarding.tools
-    ?.find((tool) => tool.name === 'save_collected_data' && tool.enabled !== false)
-    ?.config?.customerFields;
-  if (Array.isArray(collectionFields) && collectionFields.length) {
-    registry.injectDataCollectionTool(collectionFields);
-  }
-  for (const tool of automation.tools || []) {
-    if (!tool.enabled || !tool.name || !tool.schema) continue;
-    if (tool.config?.type === 'webhook' && tool.config?.webhookUrl) {
-      // An explicitly configured webhook should replace the matching built-in
-      // action rather than leaving duplicate function names in the LLM schema.
-      registry.remove(tool.name);
-      registry.registerWebhook(tool.name, tool.schema, tool.config);
-    } else if (!automation.agentId && agentDependentTools.has(tool.name)) {
-      // These names are implemented by Agent-owned CRM services. Do not
-      // expose a tool that cannot execute in a standalone WhatsApp session.
-      continue;
-    } else if (!registry.isBuiltIn(tool.name)) {
-      registry.registerCustom(tool.name, tool.schema);
-    }
-  }
-  manager.registry = registry;
-  manager.toolExecutor.registry = registry;
-  manager.toolExecutor.agentId = automation.agentId || null;
-  manager.toolExecutor.customToolFallback = true;
+  adapter.sessionId = persisted?.id || null;
 
+  const manager = new WhatsAppConversationManager(adapter, automation.providers || null);
+  manager.sessionId = persisted?.id || null;
+  manager.automationId = automation.id;
+  manager.contactWaId = contactWaId;
+  manager.timezone = automation.timezone;
+
+  // Only tools in this registry are exposed to the LLM or executable.
+  const registry = buildRegistryForAutomation(automation);
+  manager.setRegistry(registry);
+  Object.assign(manager.toolExecutor.context, {
+    workspaceId: automation.workspaceId,
+    automationId: automation.id,
+    timezone: automation.timezone,
+    sessionId: persisted?.id || null,
+  });
   const config = {
     systemPrompt: buildWhatsAppPrompt(automation, {
       language: automation.language,
       timezone: automation.timezone,
-      toolNames: registry.getAllSchemas({ includeEndCall: false })
-        .map(tool => tool.function?.name)
-        .filter(Boolean),
+      toolNames: registry.names(),
     }, connection.provider),
     firstMessage: typeof automation.initialMessage === 'string'
       ? automation.initialMessage.trim()
@@ -136,12 +110,18 @@ async function getOrCreateSession({ automation, connection, contactWaId, contact
     contactWaId,
   };
 
-  manager.toolExecutor.contactWaId = contactWaId;
-  manager.toolExecutor.contactName = adapter.contactProfileName;
-  manager.toolExecutor.contactProvider = connection.provider;
-  manager.toolExecutor.connectionId = connection.id;
+  Object.assign(manager.toolExecutor.context, {
+    contactWaId,
+    contactName: adapter.contactProfileName,
+    contactProvider: connection.provider,
+    connectionId: connection.id,
+    sessionId: persisted?.id || null,
+  });
 
-  await manager.start({ ...config, firstMessage: persisted ? '' : config.firstMessage });
+  // manager.start() initializes the LLM with the system prompt.
+  // We pass firstMessage='' here — the caller (handleMessages) decides whether
+  // to send the initialMessage or let the first_message auto-reply rule handle it.
+  await manager.start({ ...config, firstMessage: persisted ? '' : '' });
   if (persisted) {
     manager.transcript.push(...persisted.transcript);
     manager.isHandoff = persisted.status === 'human_handoff';
@@ -151,12 +131,17 @@ async function getOrCreateSession({ automation, connection, contactWaId, contact
     conversationManager: manager,
     adapter,
     contactWaId,
+    sessionId: persisted?.id || null,
     status: persisted?.status || 'active',
     createdAt: persisted?.createdAt,
+    // Signal to handleMessages that the initialMessage should be sent for this session.
+    // handleMessages will decide whether to send it based on auto-reply rules.
+    shouldSendInitialMessage: isNew && Boolean(config.firstMessage),
+    initialMessage: config.firstMessage,
   };
   entry.status = entry.conversationManager.isHandoff ? 'human_handoff' : 'active';
   await store.set(connection, automation, contactWaId, entry);
-  return entry;
+  return { entry, isNew, persisted };
 }
 
 // `replay` is set by crash recovery: the messages were already claimed in the inbox.
@@ -216,17 +201,88 @@ async function handleMessages({ automation, connection, provider, messages, repl
       if (inboxAvailable) await inbox.markDropped(connection.id, messageIds).catch(() => {});
       return;
     }
-    const isNewSession = !store.get(connection.id, contactWaId);
-    const entry = await getOrCreateSession({
+    const { entry, isNew: isNewSession, persisted } = await getOrCreateSession({
       automation, connection, contactWaId, provider,
       contactJid: contactMessages[0].jid || contactWaId,
       profileName: contactMessages[0].profileName,
     });
 
+    // Ensure contact exists and check opt-out compliance
+    let crmContact = null;
+    try {
+      crmContact = await crm.ensureContact({
+        automationId: automation.id,
+        waId: contactWaId,
+        name: contactMessages[0]?.profileName,
+      });
+    } catch (e) {
+      console.warn('[WhatsAppAutomation] CRM ensureContact failed:', e.message);
+    }
+
+    // Determine if this turn is eligible for first_message (welcome) auto-reply.
+    // A welcome rule should run if:
+    // 1) The active transcript has no prior user messages (first turn in conversation), OR
+    // 2) The session was stale or brand new, OR
+    // 3) The contact sent an explicit greeting/starter (e.g. 'hi', 'hello', 'start', 'menu')
+    //    and the conversation is not deep in an active multi-turn flow.
+    const hasPriorUserMessages = Array.isArray(entry.conversationManager?.transcript) &&
+      entry.conversationManager.transcript.some((m) => m.role === 'user');
+    const isNewOrStaleSession = isNewSession || Boolean(persisted?.isStale);
+    const GREETINGS = new Set(['hi', 'hello', 'hey', 'start', 'restart', 'menu', 'welcome', 'namaste', 'hola']);
+    const firstMsgText = String(contactMessages[0]?.text || '').trim().toLowerCase();
+    const isGreetingTurn = GREETINGS.has(firstMsgText);
+    const isFirstContactMessage = isNewOrStaleSession || !hasPriorUserMessages || isGreetingTurn;
+
+    // Send the initialMessage proactively for new sessions, UNLESS a first_message
+    // auto-reply rule is configured (in which case that rule IS the welcome message).
+    if (entry.shouldSendInitialMessage && !autoReplyService.hasFirstMessageRule()) {
+      try {
+        const normalized = normalizeWhatsAppResponse(entry.initialMessage);
+        const displayContent = extractPlainText(normalized);
+        entry.conversationManager.transcript.push({ role: 'assistant', content: displayContent, richResponse: normalized });
+        await entry.adapter.sendResponse(normalized);
+        await _incrementMessageCounter(connection.id, contactWaId, 'sent');
+      } catch (err) {
+        console.error('[WhatsAppAutomation] Failed to send initial message:', err.message);
+      }
+      entry.shouldSendInitialMessage = false;
+    }
+
+    const STOP_COMMANDS = new Set(['stop', 'unsubscribe', 'cancel', 'quit', 'optout', 'end']);
+    const START_COMMANDS = new Set(['start', 'unstop', 'subscribe']);
+
     for (const [index, message] of contactMessages.entries()) {
-      // If this is the first message on a new session that has an initial greeting,
-      // record the user's message without generating another AI reply.
-      if (isNewSession && index === 0 && initialMessage && !autoReplyService.hasFirstMessageRule()) {
+      const rawText = String(message.text || '').trim().toLowerCase();
+
+      // Handle STOP command
+      if (STOP_COMMANDS.has(rawText)) {
+        if (crmContact) await crm.updateContact(crmContact.id, { optedOut: true });
+        await entry.adapter.sendText('You have been unsubscribed from automated messages. Reply START at any time to resume communication.');
+        continue;
+      }
+
+      // Handle START command
+      if (START_COMMANDS.has(rawText)) {
+        if (crmContact) {
+          await crm.updateContact(crmContact.id, { optedOut: false });
+          crmContact.optedOut = false;
+        }
+        await entry.adapter.sendText('You have been resubscribed to messages. How can we help you today?');
+        continue;
+      }
+
+      // If contact is opted out, suppress all automated replies
+      if (crmContact?.optedOut) {
+        console.log(`[WhatsAppAutomation] Suppressing automated reply for opted-out contact: ${contactWaId}`);
+        continue;
+      }
+
+
+      // If this is genuinely the first message from a brand new contact on a new session,
+      // AND there is no first_message auto-reply rule (which would respond for us),
+      // AND the user's message has already been acknowledged by the initialMessage greeting,
+      // skip generating an additional AI response — the greeting already covered it.
+      if (isFirstContactMessage && index === 0 && entry.initialMessage && !autoReplyService.hasFirstMessageRule()) {
         const text = message.text || `[User sent a ${message.type || 'message'}]`;
         entry.conversationManager.transcript.push({ role: 'user', content: text });
         await store.set(connection, automation, contactWaId, entry);
@@ -237,7 +293,11 @@ async function handleMessages({ automation, connection, provider, messages, repl
       let log = null;
       try {
         const inboundMessage = getIncomingLogMessage(message);
-        log = WhatsAppAutomationLogService.build(automation.id, { connectionId: connection.id, contactWaId });
+        log = WhatsAppAutomationLogService.build(automation.id, {
+          connectionId: connection.id,
+          contactWaId,
+          sessionId: entry.sessionId || entry.id,
+        });
         await log.info('message', 'incoming', inboundMessage || `Received ${message.type} message`, {
           messageType: message.type,
           messageId: message.id,
@@ -254,7 +314,7 @@ async function handleMessages({ automation, connection, provider, messages, repl
       // Increment received counter
       await _incrementMessageCounter(connection.id, contactWaId, 'received');
 
-      // Check for auto-reply BEFORE LLM
+      // Check for auto-reply BEFORE LLM (only trigger welcome rule on genuinely first contact message)
       const autoReplyResult = await _checkAutoReply({
         autoReplyService,
         message,
@@ -264,7 +324,7 @@ async function handleMessages({ automation, connection, provider, messages, repl
         entry,
         provider,
         log,
-        isFirstMessage: isNewSession && index === 0,
+        isFirstMessage: isFirstContactMessage && index === 0,
       });
       
       if (autoReplyResult.handled) {
@@ -363,20 +423,36 @@ async function _checkAutoReply({ autoReplyService, message, automation, connecti
     triggerKey = message.name || 'flow';
     triggerValue = message.name || 'flow';
   }
+  // For location, media (image/video/audio/document), and other types:
+  // triggerType stays null — these cannot match keyword/button/list rules,
+  // but 'always' and 'first_message' rules still apply.
 
-  if (!triggerType && !isFirstMessage) return { handled: false };
+  // Only bail early if there is no trigger AND this is not a first message.
+  // 'always' rules still need a chance to run for any message type.
+  const hasNoSpecificTrigger = !triggerType;
+  if (hasNoSpecificTrigger && !isFirstMessage && !autoReplyService.hasAlwaysRule()) {
+    return { handled: false };
+  }
 
   const match = autoReplyService.match({ triggerType, triggerKey, triggerValue, userText, isFirstMessage });
 
   if (match.matched) {
     const matchedResponseText = getMessageText(match.response?.text || match.response?.body || match.response?.message || match.response?.value || match.response || '');
-    await log.info('auto_reply', 'matched', `Auto-reply rule matched: ${match.rule.triggerType}`, {
+    const ruleLabel = match.rule.name || match.rule.triggerType;
+    await log.info('auto_reply', 'matched', `Auto-reply rule matched: ${ruleLabel}`, {
       ruleId: match.rule.id,
+      ruleName: match.rule.name,
       triggerType: match.rule.triggerType,
       triggerKey: match.rule.triggerKey,
       responseType: match.response._type,
       responseValue: matchedResponseText,
     });
+
+    // Record the user's message in the LLM transcript even when auto-reply handles it.
+    // This preserves conversation context if the user continues after an auto-reply.
+    const userContent = getIncomingLogMessage(message) || `[User sent a ${message.type || 'message'}]`;
+    entry.conversationManager.transcript.push({ role: 'user', content: userContent });
+    entry.conversationManager.transcript.push({ role: 'assistant', content: matchedResponseText || '[Auto-reply sent]' });
 
     // Send the auto-reply response
     try {
@@ -386,20 +462,34 @@ async function _checkAutoReply({ autoReplyService, message, automation, connecti
         typeof provider?.sendMessagePayload === 'function',
         log,
       );
-      for (const item of pre) await entry.adapter.sendResponse(item);
-      await entry.adapter.sendResponse(response);
-      
+      const replyCtx = { isAutoReply: true, ruleId: match.rule.id, ruleName: match.rule.name };
+      for (const item of pre) await entry.adapter.sendResponse(item, replyCtx);
+      await entry.adapter.sendResponse(response, replyCtx);
+
+      await log.info('auto_reply', 'sent', matchedResponseText || `Sent auto-reply: ${ruleLabel}`, {
+        ruleId: match.rule.id,
+        ruleName: match.rule.name,
+        triggerType: match.rule.triggerType,
+        responseType: match.response._type,
+        rawValue: matchedResponseText,
+      });
+
       // Increment sent counter
       await _incrementMessageCounter(connection.id, contactWaId, 'sent');
     } catch (err) {
-      await log.error('auto_reply', 'send_failed', `Failed to send auto-reply`, {
+      await log.error('auto_reply', 'send_failed', `Failed to send auto-reply: ${err.message}`, {
         ruleId: match.rule.id,
+        ruleName: match.rule.name,
         error: err.message,
       });
       await _incrementMessageCounter(connection.id, contactWaId, 'failed');
     }
 
     return { handled: true };
+  }
+
+  if (autoReplyService.rules.length > 0) {
+    console.log(`[WhatsAppAutomation] No auto-reply matched for ${contactWaId}. Trigger: ${triggerType}, Key: "${triggerKey}", Value: "${triggerValue}", Text: "${userText}", isFirst: ${isFirstMessage}`);
   }
 
   return { handled: false };

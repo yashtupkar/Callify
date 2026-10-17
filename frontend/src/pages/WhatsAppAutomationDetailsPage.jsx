@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { Plus, Trash2, Link2, Pencil, Save, X, Check, KeyRound, Phone, Terminal, ArrowLeft, Pause, Play, Settings2, Bot } from "lucide-react";
+import { Plus, Trash2, Link2, Pencil, Save, X, Check, KeyRound, Phone, Terminal, ArrowLeft, Pause, Play, Settings2, Bot, Users } from "lucide-react";
 import {
   WEBHOOK_URL,
   toolOptions,
@@ -32,6 +32,9 @@ import {
   useAutomationsController,
   AutomationModals,
 } from "@/components/whatsapp/automationKit";
+import CustomToolsEditor from "@/components/whatsapp/CustomToolsEditor";
+import CrmTab from "@/components/whatsapp/CrmTab";
+import LogsTab from "@/components/whatsapp/LogsTab";
 
 export default function WhatsAppAutomationDetailsPage() {
   const navigate = useNavigate();
@@ -157,20 +160,26 @@ function DetailView({
         </div>
         <div className="flex flex-wrap gap-2">
           <Button
+            variant={tab === "crm" ? "primary" : "default"}
+            onClick={() => setTab("crm")}
+          >
+            <Users className="h-4 w-4" />
+            CRM &amp; Leads
+          </Button>
+          <Button
+            variant={tab === "logs" ? "primary" : "default"}
+            onClick={() => setTab("logs")}
+          >
+            <Terminal className="h-4 w-4" />
+            Live logs
+          </Button>
+          <Button
             onClick={() =>
               navigate(`/whatsapp/setup/${automation.id}`)
             }
           >
             <Settings2 className="h-4 w-4" />
             Setup wizard
-          </Button>
-          <Button
-            onClick={() =>
-              navigate(`/admin/whatsapp-automations/${automation.id}/logs`)
-            }
-          >
-            <Terminal className="h-4 w-4" />
-            Live logs
           </Button>
           <Button
             disabled={pending}
@@ -214,17 +223,23 @@ function DetailView({
             aria-selected={tab === key}
             onClick={() => setTab(key)}
             className={cn(
-              "-mb-px whitespace-nowrap border-b-2 px-4 py-2.5 transition",
+              "-mb-px flex items-center gap-2 whitespace-nowrap border-b-2 px-4 py-2.5 text-sm transition",
               tab === key
-                ? "border-sky-500 text-zinc-50"
-                : "border-transparent text-zinc-500 hover:text-zinc-200",
+                ? "border-sky-500 font-semibold text-zinc-50"
+                : "border-transparent text-zinc-400 hover:text-zinc-200"
             )}
           >
-            {label}
-            {key === "rules" && <Badge className="ml-2">{rules.length}</Badge>}
+            <span>{label}</span>
+            {key === "logs" && (
+              <span className="relative flex h-2 w-2">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+              </span>
+            )}
+            {key === "rules" && <Badge className="ml-1">{rules.length}</Badge>}
             {key === "channels" && (
               <Badge
-                className="ml-2"
+                className="ml-1"
                 tone={automation.connections?.length ? "green" : "amber"}
               >
                 {automation.connections?.length || 0}
@@ -235,9 +250,11 @@ function DetailView({
       </div>
 
       {tab === "overview" && <OverviewTab {...tabProps} setTab={setTab} />}
+      {tab === "crm" && <CrmTab {...tabProps} setTab={setTab} />}
+      {tab === "logs" && <LogsTab automation={automation} setTab={setTab} />}
       {tab === "rules" && <RulesTab {...tabProps} />}
-      {tab === "settings" && <SettingsTab {...tabProps} />}
       {tab === "channels" && <ChannelsTab {...tabProps} />}
+      {tab === "settings" && <SettingsTab {...tabProps} />}
     </>
   );
 }
@@ -372,13 +389,22 @@ function OverviewTab({ automation: a, rules, setTab, navigate }) {
             <p className="text-xs text-zinc-500">No numbers connected yet.</p>
           )}
         </Card>
-        <Button
-          className="w-full justify-center"
-          onClick={() => navigate(`/admin/whatsapp-automations/${a.id}/logs`)}
-        >
-          <Terminal className="h-4 w-4" />
-          Open live logs
-        </Button>
+        <div className="grid grid-cols-2 gap-2">
+          <Button
+            className="w-full justify-center border-sky-500/30 bg-sky-500/10 text-sky-300 hover:bg-sky-500/20"
+            onClick={() => setTab("crm")}
+          >
+            <Users className="h-4 w-4" />
+            Open CRM
+          </Button>
+          <Button
+            className="w-full justify-center border-emerald-500/30 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20"
+            onClick={() => setTab("logs")}
+          >
+            <Terminal className="h-4 w-4" />
+            Open live logs
+          </Button>
+        </div>
       </div>
     </div>
   );
@@ -661,6 +687,9 @@ function SettingsTab({ automation, actions }) {
           </Card>
         </div>
         <div>
+          <Card title="Custom tools">
+            <CustomToolsEditor tools={form.tools} onChange={(tools) => set("tools", tools)} />
+          </Card>
           <Card title="Enabled tools">
             <p className="mb-3 text-xs text-zinc-500">
               Only enabled tools are exposed to the WhatsApp LLM.

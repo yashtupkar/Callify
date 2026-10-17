@@ -43,6 +43,19 @@ function extractJsonFromText(raw) {
   const trimmed = raw.trim();
   if (!trimmed) return null;
 
+  // Split by newline and try to parse the last valid JSON (in case model outputs multiple tool calls as jsonl)
+  const lines = trimmed.split('\n');
+  if (lines.length > 1) {
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const line = lines[i].trim();
+      if (line.startsWith('{') && line.endsWith('}')) {
+        try {
+          return JSON.parse(line);
+        } catch (_) {}
+      }
+    }
+  }
+
   // Direct parse
   if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
     try {
@@ -94,6 +107,52 @@ function isValidHttpUrl(urlStr) {
 }
 
 /**
+ * Formats standard Markdown into clean WhatsApp-compatible text formatting:
+ * - Bold: **text** -> *text*, __text__ -> *text*
+ * - Bold Italic: ***text*** -> *_text_*
+ * - Headers: ### Header -> *Header*
+ * - Links: [Text](url) -> Text (url)
+ * - Lists: - item -> • item
+ * - Cleans up stray horizontal rules and excessive blank lines
+ */
+function formatWhatsAppMarkdown(text) {
+  if (typeof text !== 'string' || !text) return text;
+
+  let out = text;
+
+  // 1. Headers: '# Title', '## Subtitle', '### Section' -> '*Title*'
+  out = out.replace(/^(#{1,6})\s+([^\n]+)$/gm, (_match, _hashes, content) => {
+    return `*${content.trim()}*`;
+  });
+
+  // 2. Bold italic: '***text***' -> '*_text_*'
+  out = out.replace(/\*\*\*([^*\n]+)\*\*\*/g, '*_$1_*');
+
+  // 3. Bold: '**bold**' -> '*bold*' and '__bold__' -> '*bold*'
+  out = out.replace(/\*\*([^*\n]+)\*\*/g, '*$1*');
+  out = out.replace(/__([^_\n]+)__/g, '*$1*');
+
+  // 4. Links: '[Anchor Text](https://...)' -> 'Anchor Text (https://...)'
+  out = out.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, (_match, title, url) => {
+    const cleanTitle = title.trim();
+    const cleanUrl = url.trim();
+    if (cleanTitle === cleanUrl) return cleanUrl;
+    return `${cleanTitle} (${cleanUrl})`;
+  });
+
+  // 5. Horizontal rules: '---', '***', '___' -> clean line break
+  out = out.replace(/^(\s*[-*_]\s*){3,}$/gm, '');
+
+  // 6. Clean up markdown bullet points: '* item' or '- item' at start of line -> '• item'
+  out = out.replace(/^(\s*)[-*]\s+([^\n]+)$/gm, '$1• $2');
+
+  // 7. Normalize excessive blank lines (max 2 consecutive newlines)
+  out = out.replace(/\n{3,}/g, '\n\n');
+
+  return out.trim();
+}
+
+/**
  * Normalizes and validates an AI response object.
  * Returns a strictly valid normalized response object.
  *
@@ -113,7 +172,7 @@ function normalizeWhatsAppResponse(input) {
     obj = extractJsonFromText(input);
     if (!obj) {
       // Treat plain text string as a plain text response
-      const text = input.trim();
+      const text = formatWhatsAppMarkdown(input.trim());
       return {
         _type: 'text',
         text: text || "I'm sorry, I couldn't process that request. How else can I help?",
@@ -133,13 +192,13 @@ function normalizeWhatsAppResponse(input) {
   // If missing or unsupported _type, check if it has recognizable fields or fallback to text
   if (!VALID_RESPONSE_TYPES.has(rawType)) {
     if (typeof obj.text === 'string' && obj.text.trim()) {
-      return { _type: 'text', text: obj.text.trim() };
+      return { _type: 'text', text: formatWhatsAppMarkdown(obj.text.trim()) };
     }
     if (typeof obj.body === 'string' && obj.body.trim()) {
-      return { _type: 'text', text: obj.body.trim() };
+      return { _type: 'text', text: formatWhatsAppMarkdown(obj.body.trim()) };
     }
     if (typeof obj.message === 'string' && obj.message.trim()) {
-      return { _type: 'text', text: obj.message.trim() };
+      return { _type: 'text', text: formatWhatsAppMarkdown(obj.message.trim()) };
     }
     return {
       _type: 'text',
@@ -196,7 +255,7 @@ function validateTextResponse(obj) {
   }
   return {
     _type: 'text',
-    text: String(text).slice(0, 4096),
+    text: formatWhatsAppMarkdown(String(text)).slice(0, 4096),
   };
 }
 
@@ -258,6 +317,9 @@ function validateButtonResponse(obj) {
 
   if (obj.header && typeof obj.header === 'string') {
     result.header = obj.header.trim().slice(0, 60);
+  }
+  if (obj.headerMedia && typeof obj.headerMedia === 'object' && obj.headerMedia.url) {
+    result.headerMedia = obj.headerMedia;
   }
   if (obj.footer && typeof obj.footer === 'string') {
     result.footer = obj.footer.trim().slice(0, 60);
@@ -513,10 +575,16 @@ function validateLocationResponse(obj) {
  * Validates human handoff response.
  */
 function validateHandoffResponse(obj) {
-  const message = typeof obj.message === 'string' ? obj.message.trim() : (obj.text || obj.body || '');
+  const defaultMsg = "👥 *Connecting with Our Team*\n\nOur team has been notified and will connect with you in a short time. Please keep patience as our representatives will reach out as soon as they are available. 🙏\n\n_(Reply *BOT* or *MENU* at any time if you wish to return to automated assistance.)_";
+  let message = typeof obj.message === 'string' && obj.message.trim() ? obj.message.trim() : (obj.text || obj.body || '');
+  if (!message || message.toLowerCase().includes('wait a moment')) {
+    message = defaultMsg;
+  } else {
+    message = formatWhatsAppMarkdown(message);
+  }
   return {
     _type: 'handoff',
-    message: message || "I'll connect you with a team member. Please wait a moment.",
+    message,
   };
 }
 
@@ -527,11 +595,11 @@ function validateHandoffResponse(obj) {
  * @returns {string} Plain text representation
  */
 function extractPlainText(response) {
-  if (!response || typeof response !== 'object') return String(response || '');
+  if (!response || typeof response !== 'object') return formatWhatsAppMarkdown(String(response || ''));
 
   switch (response._type) {
     case 'text':
-      return response.text || '';
+      return formatWhatsAppMarkdown(response.text || '');
 
     case 'button': {
       const parts = [];
@@ -541,7 +609,7 @@ function extractPlainText(response) {
         parts.push(response.buttons.map((b, i) => `${i + 1}. ${b.title}`).join('\n'));
       }
       if (response.footer) parts.push(`_${response.footer}_`);
-      return parts.join('\n\n');
+      return formatWhatsAppMarkdown(parts.join('\n\n'));
     }
 
     case 'list': {
@@ -561,7 +629,7 @@ function extractPlainText(response) {
         }
       }
       if (response.footer) parts.push(`_${response.footer}_`);
-      return parts.join('\n\n');
+      return formatWhatsAppMarkdown(parts.join('\n\n'));
     }
 
     case 'cta_url': {
@@ -572,13 +640,13 @@ function extractPlainText(response) {
         parts.push(`${response.button.title || 'Link'}: ${response.button.url}`);
       }
       if (response.footer) parts.push(`_${response.footer}_`);
-      return parts.join('\n\n');
+      return formatWhatsAppMarkdown(parts.join('\n\n'));
     }
 
     case 'media': {
       const caption = response.caption ? ` ${response.caption}` : '';
       const url = response.url ? ` (${response.url})` : '';
-      return `[${response.mediaType || 'Media'}]${caption}${url}`.trim();
+      return formatWhatsAppMarkdown(`[${response.mediaType || 'Media'}]${caption}${url}`.trim());
     }
 
     case 'template': {
@@ -591,7 +659,7 @@ function extractPlainText(response) {
       if (response.body) parts.push(response.body);
       parts.push(`[Form / Flow: ${response.cta || 'Start'}]`);
       if (response.footer) parts.push(`_${response.footer}_`);
-      return parts.join('\n\n');
+      return formatWhatsAppMarkdown(parts.join('\n\n'));
     }
 
     case 'location': {
@@ -601,10 +669,10 @@ function extractPlainText(response) {
     }
 
     case 'handoff':
-      return response.message || "Connecting you with our team...";
+      return response.message || "👥 *Connecting with Our Team*\n\nOur team has been notified and will connect with you in a short time. Please keep patience as our representatives will reach out as soon as they are available. 🙏";
 
     default:
-      return response.text || response.body || response.message || '';
+      return formatWhatsAppMarkdown(response.text || response.body || response.message || '');
   }
 }
 
@@ -612,6 +680,7 @@ module.exports = {
   normalizeWhatsAppResponse,
   extractJsonFromText,
   extractPlainText,
+  formatWhatsAppMarkdown,
   isValidHttpUrl,
   VALID_RESPONSE_TYPES,
   VALID_MEDIA_TYPES,

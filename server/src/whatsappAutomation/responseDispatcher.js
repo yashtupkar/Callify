@@ -136,12 +136,16 @@ async function sendWhatsAppResponse({ provider, recipient, response, context = {
         connectionId: context.connectionId,
         contactWaId: context.contactWaId,
       });
-      await log.info('message', 'outgoing', outgoingMessage, {
+      const category = context.isAutoReply ? 'auto_reply' : 'message';
+      const event = context.isAutoReply ? 'sent' : 'outgoing';
+      await log.info(category, event, outgoingMessage, {
         messageType: normalized._type,
         recipient: maskPhoneNumber(recipient),
         success: result?.success || false,
         error: result?.error,
         rawValue: outgoingMessage,
+        ruleId: context.ruleId || null,
+        ruleName: context.ruleName || null,
       });
     } catch (err) {
       if (err.code !== 'P2021' && !err.message?.includes('does not exist')) {
@@ -157,7 +161,11 @@ async function sendWhatsAppResponse({ provider, recipient, response, context = {
  * Handles internal human handoff event.
  */
 async function handleHumanHandoff({ provider, recipient, response, context }) {
-  const messageText = response.message || "I'll connect you with our team. Please wait a moment.";
+  const defaultMsg = "👥 *Connecting with Our Team*\n\nOur team has been notified and will connect with you in a short time. Please keep patience as our representatives will reach out as soon as they are available. 🙏\n\n_(Reply *BOT* or *MENU* at any time if you wish to return to automated assistance.)_";
+  let messageText = response.message || defaultMsg;
+  if (messageText.toLowerCase().includes('wait a moment')) {
+    messageText = defaultMsg;
+  }
 
   try {
     // 1. Update session status if session object exists
@@ -281,8 +289,16 @@ async function sendBaileysResponse({ provider, recipient, response, context }) {
 
       case 'button':
         if (typeof provider.sendPoll === 'function' && Array.isArray(response.buttons) && response.buttons.length > 0) {
+          const bodyText = (response.body || response.text || '').trim();
           const options = response.buttons.map((b) => b.title);
-          await provider.sendPoll(to, response.body || 'Choose an option:', options);
+          // WhatsApp polls have a character limit on the question title (255 chars).
+          // If the reply text is longer, send the full welcome text first, then the poll as the selector!
+          if (bodyText.length > 255) {
+            await provider.sendText(to, bodyText);
+            await provider.sendPoll(to, 'Choose an option:', options);
+          } else {
+            await provider.sendPoll(to, bodyText || 'Choose an option:', options);
+          }
         } else {
           // Format as numbered text list
           const formatted = extractPlainText(response);

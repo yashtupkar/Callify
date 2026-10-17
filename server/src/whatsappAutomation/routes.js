@@ -4,22 +4,13 @@ const { authMiddleware, requireAdmin } = require('../middleware/auth');
 const { createWhatsAppAutomationProvider } = require('./factory');
 const { store } = require('./sessionStore');
 const { encryptConnectionSecrets } = require('./secretBox');
+const { createCrmRouter } = require('./tools/crmRoutes');
+const { BUILT_IN_TOOLS } = require('./tools');
 
 const router = express.Router();
 router.use(authMiddleware);
 
-const BUILT_IN_TOOL_NAMES = [
-  'check_availability',
-  'create_booking',
-  'get_bookings',
-  'cancel_booking',
-  'reschedule_booking',
-  'get_pricing',
-  'save_collected_data',
-  'send_followup_email',
-  'send_whatsapp',
-  'transfer_call',
-];
+const BUILT_IN_TOOL_NAMES = BUILT_IN_TOOLS.map((tool) => tool.name);
 
 function buildToolRows(capabilities = [], suppliedTools = []) {
   const configured = new Map(
@@ -48,7 +39,7 @@ function buildToolRows(capabilities = [], suppliedTools = []) {
         },
       },
       config: tool.config || null,
-      enabled: tool.enabled !== false && (requested.size === 0 || requested.has(name) || configured.has(name)),
+      enabled: tool.enabled !== false && (BUILT_IN_TOOL_NAMES.includes(name) || requested.size === 0 || requested.has(name) || configured.has(name)),
     };
   });
 }
@@ -120,6 +111,7 @@ async function resolveWorkspaceId(req) {
   return workspace?.id || null;
 }
 
+
 // Every route addressed by :automationId must belong to the caller's workspace.
 // Admins are scoped too: the role grants rights inside a workspace, not across tenants.
 router.param('automationId', async (req, res, next, automationId) => {
@@ -136,6 +128,8 @@ router.param('automationId', async (req, res, next, automationId) => {
     res.status(500).json({ error: 'Failed to verify automation access' });
   }
 });
+
+router.use('/:automationId/crm', createCrmRouter((req) => req.params.automationId));
 
 // Webhook routing keys must be globally unique or one tenant could receive another tenant's traffic.
 async function findRoutingConflict(data, excludeConnectionId) {
@@ -386,7 +380,9 @@ router.put('/:automationId', requireAdmin, async (req, res) => {
 });
 
 router.delete('/:automationId', requireAdmin, async (req, res) => {
-  const result = await dbService.prisma.whatsAppAutomation.deleteMany({ where: { id: req.params.automationId, workspaceId: req.user.workspaceId } });
+  const workspaceId = await resolveWorkspaceId(req);
+  if (!workspaceId) return res.status(403).json({ error: 'No workspace assigned to user' });
+  const result = await dbService.prisma.whatsAppAutomation.deleteMany({ where: { id: req.params.automationId, workspaceId } });
   if (!result.count) return res.status(404).json({ error: 'Automation not found' });
   res.status(204).send();
 });
@@ -495,8 +491,10 @@ router.put('/:automationId/connections/:connectionId', requireAdmin, async (req,
 });
 
 router.delete('/:automationId/connections/:connectionId', requireAdmin, async (req, res) => {
+  const workspaceId = await resolveWorkspaceId(req);
+  if (!workspaceId) return res.status(403).json({ error: 'No workspace assigned to user' });
   const result = await dbService.prisma.whatsAppConnection.deleteMany({
-    where: { id: req.params.connectionId, automationId: req.params.automationId, automation: { workspaceId: req.user.workspaceId } },
+    where: { id: req.params.connectionId, automationId: req.params.automationId, automation: { workspaceId } },
   });
 
   if (!result.count) return res.status(404).json({ error: 'Connection not found' });
@@ -504,8 +502,10 @@ router.delete('/:automationId/connections/:connectionId', requireAdmin, async (r
 });
 
 router.get('/:automationId/connections/:connectionId/status', requireAdmin, async (req, res) => {
+  const workspaceId = await resolveWorkspaceId(req);
+  if (!workspaceId) return res.status(403).json({ error: 'No workspace assigned to user' });
   const connection = await dbService.prisma.whatsAppConnection.findFirst({
-    where: { id: req.params.connectionId, automationId: req.params.automationId, automation: { workspaceId: req.user.workspaceId } },
+    where: { id: req.params.connectionId, automationId: req.params.automationId, automation: { workspaceId } },
   });
   if (!connection) return res.status(404).json({ error: 'Connection not found' });
   try {
@@ -646,8 +646,15 @@ router.put('/:automationId/auto-replies/:ruleId', requireAdmin, async (req, res)
     if (data.responseConfig && typeof data.responseConfig === 'string') {
       try { data.responseConfig = JSON.parse(data.responseConfig); } catch { data.responseConfig = null; }
     }
+    const workspaceId = await resolveWorkspaceId(req);
+    const automation = await dbService.prisma.whatsAppAutomation.findFirst({
+      where: { id: req.params.automationId, workspaceId },
+      select: { id: true },
+    });
+    if (!automation) return res.status(404).json({ error: 'Automation not found' });
+
     const rule = await dbService.prisma.whatsAppAutoReplyRule.updateMany({
-      where: { id: req.params.ruleId, automationId: req.params.automationId, automation: { workspaceId: req.user.workspaceId } },
+      where: { id: req.params.ruleId, automationId: req.params.automationId },
       data,
     });
     if (!rule.count) return res.status(404).json({ error: 'Auto-reply rule not found' });
@@ -660,8 +667,15 @@ router.put('/:automationId/auto-replies/:ruleId', requireAdmin, async (req, res)
 
 router.delete('/:automationId/auto-replies/:ruleId', requireAdmin, async (req, res) => {
   try {
+    const workspaceId = await resolveWorkspaceId(req);
+    const automation = await dbService.prisma.whatsAppAutomation.findFirst({
+      where: { id: req.params.automationId, workspaceId },
+      select: { id: true },
+    });
+    if (!automation) return res.status(404).json({ error: 'Automation not found' });
+
     const result = await dbService.prisma.whatsAppAutoReplyRule.deleteMany({
-      where: { id: req.params.ruleId, automationId: req.params.automationId, automation: { workspaceId: req.user.workspaceId } },
+      where: { id: req.params.ruleId, automationId: req.params.automationId },
     });
     if (!result.count) return res.status(404).json({ error: 'Auto-reply rule not found' });
     res.status(204).send();

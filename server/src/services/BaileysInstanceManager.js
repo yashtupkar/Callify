@@ -102,12 +102,10 @@ class BaileysInstanceManager extends EventEmitter {
                 onMessage: (message) => this.handleMessage(item.instanceId, message)
               });
               this.instances.set(item.instanceId, provider);
-              console.log(`[BaileysInstanceManager] Auto-started provider for ${item.instanceId}`);
             } catch (err) {
               console.error(`[BaileysInstanceManager] Failed to auto-start provider for ${item.instanceId}:`, err);
             }
           } else {
-            console.log(`[BaileysInstanceManager] No saved auth for ${item.instanceId}, will need manual reconnect`);
           }
         }
       } else {
@@ -131,12 +129,10 @@ class BaileysInstanceManager extends EventEmitter {
       
       // Ensure auth directory exists
       if (!fs.existsSync(this.authPath)) {
-        console.log('[BaileysInstanceManager] Creating auth directory:', this.authPath);
         fs.mkdirSync(this.authPath, { recursive: true });
       }
       
       fs.writeFileSync(this.persistenceFile, JSON.stringify(data, null, 2));
-      console.log('[BaileysInstanceManager] Persisted instance metadata to:', this.persistenceFile);
     } catch (err) {
       console.error('[BaileysInstanceManager] Error persisting instances:', err);
     }
@@ -224,13 +220,11 @@ class BaileysInstanceManager extends EventEmitter {
       this.instances.delete(instanceId);
       this.agentMapping.delete(instanceId);
       this.persistInstances();
-      console.log(`[BaileysInstanceManager] Removed instance ${instanceId}`);
       this.emit('instanceRemoved', { instanceId });
     } else {
       // Remove only the mapping if no active provider exists
       this.agentMapping.delete(instanceId);
       this.persistInstances();
-      console.log(`[BaileysInstanceManager] Removed mapping for instance ${instanceId}`);
       this.emit('instanceRemoved', { instanceId });
     }
   }

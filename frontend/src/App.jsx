@@ -13,7 +13,6 @@ import CrmContactsPage from '@/pages/crm/CrmContactsPage';
 import CrmCalendarPage from '@/pages/crm/CrmCalendarPage';
 import CrmAgentsListPage from '@/pages/crm/CrmAgentsListPage';
 import CrmAgentConfigPage from '@/pages/crm/CrmAgentConfigPage';
-import WhatsAppLivePage from '@/pages/WhatsAppLivePage';
 import WhatsAppAutomationSetupPage from '@/pages/WhatsAppAutomationSetupPage';
 import WhatsAppNumbersPage from '@/pages/WhatsAppNumbersPage';
 import WhatsAppAutomationLogsPage from '@/pages/WhatsAppAutomationLogsPage';
@@ -22,6 +21,7 @@ import WhatsAppAutomationDetailsPage from '@/pages/WhatsAppAutomationDetailsPage
 import CampaignsPage from '@/pages/CampaignsPage';
 import CampaignCreatePage from '@/pages/CampaignCreatePage';
 import CampaignDetailsPage from '@/pages/CampaignDetailsPage';
+import WhatsAppCrmPage from '@/pages/WhatsAppCrmPage';
 
 function RootRedirect() {
   const { user, isAuthenticated, loading } = useAuth();
@@ -56,8 +56,8 @@ function App() {
           <Route element={<RequireAdmin />}>
             <Route path="/agents" element={<AgentStudioPage />} />
             <Route path="/agents/:agentId" element={<AgentStudioPage />} />
-            <Route path="/admin/whatsapp-live" element={<WhatsAppLivePage />} />
             <Route path="/whatsapp" element={<WhatsAppAutomationsPage />} />
+          <Route path="/whatsapp/crm" element={<WhatsAppCrmPage />} />
             <Route
               path="/whatsapp/setup"
               element={<WhatsAppAutomationSetupPage />}
