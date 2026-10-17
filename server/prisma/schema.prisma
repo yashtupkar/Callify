@@ -270,6 +270,8 @@ model Workspace {
   whatsAppInstances   WhatsAppInstance[]
   whatsAppAutomations WhatsAppAutomation[]
   users               User[]
+  whatsAppCampaigns   WhatsAppCampaign[]
+  whatsAppOptOuts     WhatsAppOptOut[]
 }
 
 // ─── Automation CRM ─────────────────────────────────────────────────────────────
@@ -340,12 +342,6 @@ model AutomationRecord {
   @@unique([automationId, reference])
   @@index([automationId, type, status])
   @@index([contactId])
-}
-
-
-  users               User[]
-  whatsAppCampaigns   WhatsAppCampaign[]
-  whatsAppOptOuts     WhatsAppOptOut[]
 }
 
 model Agent {
@@ -502,14 +498,6 @@ model User {
   updatedAt    DateTime   @updatedAt
 
   @@index([workspaceId])
-}
-
-  role         UserRole @default(user)
-  workspaceId  String?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-
-  workspace Workspace? @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
 }
 
 // ---------------------------------------------------------------------------

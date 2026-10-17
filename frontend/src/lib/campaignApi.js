@@ -9,7 +9,8 @@ const data = (p) => p.then((r) => r.data);
 
 export const campaignApi = {
   connections: () => data(http.get("/connections")),
-  templates: (id) => data(http.get(`/connections/${id}/templates`)),
+  templates: (id, params) => data(http.get(`/connections/${id}/templates`, { params })),
+  fetchTemplateByName: (id, name) => data(http.get(`/connections/${id}/templates`, { params: { name } })),
   previewRecipients: (body) => data(http.post("/preview-recipients", body)),
   previewMessage: (body) => data(http.post("/preview-message", body)),
   create: (body) => data(http.post("/", body)),

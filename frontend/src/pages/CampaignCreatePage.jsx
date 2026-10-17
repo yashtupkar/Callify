@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { ArrowLeft, Upload } from "lucide-react";
+import { ArrowLeft, Upload, RefreshCw, Plus, CheckCircle2, Search } from "lucide-react";
 import {
   Badge,
   Button,
@@ -100,11 +100,28 @@ export default function CampaignCreatePage() {
   const [recipientPreview, setRecipientPreview] = useState(null);
   const [messagePreview, setMessagePreview] = useState(null);
 
+  // Template import & live lookup states
+  const [templateLookupQuery, setTemplateLookupQuery] = useState("");
+  const [lookupBusy, setLookupBusy] = useState(false);
+  const [lookupError, setLookupError] = useState("");
+  const [lookupSuccess, setLookupSuccess] = useState("");
+  const [isRefreshingTemplates, setIsRefreshingTemplates] = useState(false);
+
   const set = (patch) => setForm((f) => ({ ...f, ...patch }));
   const connection = connections?.find((c) => c.id === form.connectionId);
   const isCloud = connection?.channel === "cloud_api";
-  const template = templates.find((t) => `${t.name}::${t.language}` === form.templateKey);
+  const template = templates.find((t) => `${t.name}::${t.language}` === form.templateKey || String(t.id) === form.templateKey);
   const columns = recipientPreview?.columns || file?.columns || [];
+
+  // Filter out broken / unsupported templates and non-working dummy samples
+  const usableTemplates = useMemo(() => {
+    return templates.filter((t) => {
+      if (!t.supported) return false;
+      if (t.name && t.name.includes("carousel")) return false;
+      if (t.name && t.name.startsWith("jaspers_market_")) return false;
+      return true;
+    });
+  }, [templates]);
 
   useEffect(() => {
     campaignApi
@@ -116,19 +133,63 @@ export default function CampaignCreatePage() {
       });
   }, []);
 
+  const loadTemplatesForConnection = (connId) => {
+    if (!connId || !isCloud) return;
+    campaignApi
+      .templates(connId)
+      .then((r) => setTemplates(r.templates || []))
+      .catch((e) => setError(apiError(e)));
+  };
+
   useEffect(() => {
     setTemplates([]);
     setForm((f) => ({ ...f, templateKey: "" }));
     if (!form.connectionId || !isCloud) return undefined;
-    let live = true;
-    campaignApi
-      .templates(form.connectionId)
-      .then((r) => live && setTemplates(r.templates))
-      .catch((e) => live && setError(apiError(e)));
-    return () => {
-      live = false;
-    };
+    loadTemplatesForConnection(form.connectionId);
   }, [form.connectionId, isCloud]);
+
+  const handleRefreshTemplates = async () => {
+    if (!form.connectionId || !isCloud) return;
+    setIsRefreshingTemplates(true);
+    setError("");
+    try {
+      const r = await campaignApi.templates(form.connectionId);
+      setTemplates(r.templates || []);
+    } catch (e) {
+      setError(apiError(e));
+    } finally {
+      setIsRefreshingTemplates(false);
+    }
+  };
+
+  const handleLookupTemplate = async () => {
+    const q = templateLookupQuery.trim();
+    if (!q || !form.connectionId) return;
+    setLookupBusy(true);
+    setLookupError("");
+    setLookupSuccess("");
+    try {
+      const res = await campaignApi.templates(form.connectionId, { query: q });
+      const found = res.templates || [];
+      if (!found.length) {
+        setLookupError(`Template "${q}" not found on Meta. Make sure the Template ID or Name is correct and status is APPROVED.`);
+      } else {
+        const t = found[0];
+        setTemplates((prev) => {
+          const filtered = prev.filter((x) => x.id !== t.id && `${x.name}::${x.language}` !== `${t.name}::${t.language}`);
+          return [t, ...filtered];
+        });
+        set({ templateKey: `${t.name}::${t.language}` });
+        setVariableMap({ header: {}, body: {}, buttons: {} });
+        setMessagePreview(null);
+        setLookupSuccess(`✓ Successfully linked "${t.name}" (${t.language}) from Meta!`);
+      }
+    } catch (e) {
+      setLookupError(apiError(e));
+    } finally {
+      setLookupBusy(false);
+    }
+  };
 
   const recipientsPayload = () => ({
     file: file ? { columns: file.columns, rows: file.rows } : undefined,
@@ -408,38 +469,149 @@ export default function CampaignCreatePage() {
             <div className="grid gap-4">
               {isCloud ? (
                 <>
-                  <SelectField
-                    label="Approved template"
-                    required
-                    value={form.templateKey}
-                    onChange={(v) => {
-                      set({ templateKey: v });
-                      setVariableMap({ header: {}, body: {}, buttons: {} });
-                      setMessagePreview(null);
-                    }}
-                    options={[
-                      ["", templates.length ? "Select a template" : "No templates loaded"],
-                      ...templates.map((t) => [
-                        `${t.name}::${t.language}`,
-                        `${t.name} (${t.language}) — ${t.status}${t.supported ? "" : " — unsupported"}`,
-                      ]),
-                    ]}
-                  />
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-medium text-zinc-300">Select Approved Template</label>
+                      <button
+                        type="button"
+                        onClick={handleRefreshTemplates}
+                        disabled={isRefreshingTemplates}
+                        className="inline-flex items-center gap-1.5 text-xs text-sky-400 hover:text-sky-300 transition-colors disabled:opacity-50"
+                      >
+                        <RefreshCw className={cn("h-3 w-3", isRefreshingTemplates && "animate-spin")} />
+                        {isRefreshingTemplates ? "Refreshing..." : "Refresh from Meta"}
+                      </button>
+                    </div>
+                    <SelectField
+                      required
+                      value={form.templateKey}
+                      onChange={(v) => {
+                        set({ templateKey: v });
+                        setVariableMap({ header: {}, body: {}, buttons: {} });
+                        setMessagePreview(null);
+                      }}
+                      options={[
+                        ["", usableTemplates.length ? "Choose an approved template…" : "No approved templates found"],
+                        ...usableTemplates.map((t) => [
+                          `${t.name}::${t.language}`,
+                          `${t.name} (${t.language}) — ${t.category} (${t.status})`,
+                        ]),
+                      ]}
+                    />
+                  </div>
+
+                  {/* Option for newly created templates from Meta Portal */}
+                  <div className="rounded-xl border border-sky-500/20 bg-sky-500/5 p-4 space-y-3">
+                    <div className="flex items-start justify-between">
+                      <div>
+                        <h4 className="text-xs font-semibold text-sky-300 flex items-center gap-1.5">
+                          <Plus className="h-3.5 w-3.5" />
+                          Link Newly Created Template from Meta Portal
+                        </h4>
+                        <p className="text-[11px] text-zinc-400 mt-0.5">
+                          Created a template in Meta WhatsApp Manager? Enter its Template ID (e.g. <span className="font-mono text-sky-200">1106111551822770</span>) or Name (e.g. <span className="font-mono text-sky-200">yash_automation_test</span>) to link it directly.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-col sm:flex-row gap-2">
+                      <div className="flex-1">
+                        <input
+                          type="text"
+                          placeholder="Enter Template ID or Name (e.g. 1106111551822770)"
+                          value={templateLookupQuery}
+                          onChange={(e) => setTemplateLookupQuery(e.target.value)}
+                          onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), handleLookupTemplate())}
+                          className="w-full rounded-lg border border-[#2b2b32] bg-[#0c0c0f] px-3 py-2 text-xs text-zinc-200 placeholder:text-zinc-600 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+                        />
+                      </div>
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        disabled={lookupBusy || !templateLookupQuery.trim()}
+                        onClick={handleLookupTemplate}
+                        className="shrink-0 text-xs py-2"
+                      >
+                        {lookupBusy ? (
+                          <>
+                            <RefreshCw className="h-3 w-3 animate-spin mr-1.5" />
+                            Fetching from Meta…
+                          </>
+                        ) : (
+                          <>
+                            <Search className="h-3 w-3 mr-1.5" />
+                            Fetch &amp; Link Template
+                          </>
+                        )}
+                      </Button>
+                    </div>
+
+                    {lookupSuccess && (
+                      <div className="flex items-center gap-2 text-xs text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-3 py-2 rounded-lg">
+                        <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+                        <span>{lookupSuccess}</span>
+                      </div>
+                    )}
+                    {lookupError && (
+                      <div className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 px-3 py-2 rounded-lg">
+                        {lookupError}
+                      </div>
+                    )}
+                  </div>
+
                   {template && template.status !== "APPROVED" && <Alert tone="amber">This template is {template.status}; only APPROVED templates can be sent.</Alert>}
                   {template && !template.supported && <Alert tone="amber">{template.unsupportedReason}</Alert>}
                   {template && (
-                    <div className="rounded-lg border border-[#26262b] bg-[#0c0c0f] p-3 text-zinc-300">
-                      <div className="mb-1 text-xs text-zinc-500">{template.category}</div>
-                      <p className="whitespace-pre-wrap">{template.body.text}</p>
+                    <div className="rounded-xl border border-zinc-800 bg-[#0c0c0f] p-4 text-zinc-300 space-y-2">
+                      <div className="flex items-center justify-between border-b border-zinc-800/80 pb-2">
+                        <div className="flex items-center gap-2">
+                          <span className="font-semibold text-zinc-100">{template.name}</span>
+                          <span className="rounded bg-sky-500/10 px-1.5 py-0.5 text-[10px] font-mono text-sky-400 uppercase">{template.language}</span>
+                          <span className="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-400">{template.category}</span>
+                        </div>
+                        <Badge tone="green">{template.status}</Badge>
+                      </div>
+
+                      {template.header?.format && template.header.format !== "TEXT" && (
+                        <div className="rounded border border-zinc-800/60 bg-zinc-900/40 px-2.5 py-1 text-[11px] text-zinc-400">
+                          Header format: <strong className="text-zinc-200">{template.header.format}</strong>
+                        </div>
+                      )}
+
+                      <p className="whitespace-pre-wrap text-xs text-zinc-200 leading-relaxed font-sans">{template.body.text}</p>
+
+                      {template.buttons?.length > 0 && (
+                        <div className="pt-2 flex flex-wrap gap-2 border-t border-zinc-800/60">
+                          {template.buttons.map((b, i) => (
+                            <div key={i} className="inline-flex items-center gap-1 rounded border border-zinc-700 bg-zinc-800/50 px-2.5 py-1 text-[11px] text-zinc-300 font-medium">
+                              {b.type === "URL" ? "🔗 " : "🔘 "}
+                              {b.text}
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   )}
                   {template?.header && ["IMAGE", "VIDEO", "DOCUMENT"].includes(template.header.format) && (
-                    <TextField
-                      label={`Header ${template.header.format.toLowerCase()} URL (https)`}
-                      required
-                      value={form.headerMediaUrl}
-                      onChange={(v) => set({ headerMediaUrl: v })}
-                    />
+                    <div className="space-y-1.5">
+                      <TextField
+                        label={`Header ${template.header.format.toLowerCase()} URL (https)`}
+                        required
+                        placeholder="https://example.com/banner.jpg"
+                        hint="Direct https link to the image/media that will appear at the top of the message."
+                        value={form.headerMediaUrl}
+                        onChange={(v) => set({ headerMediaUrl: v })}
+                      />
+                      {!form.headerMediaUrl && (
+                        <button
+                          type="button"
+                          onClick={() => set({ headerMediaUrl: "https://images.unsplash.com/photo-1557804506-669a67965ba0?w=800" })}
+                          className="text-[11px] text-sky-400 hover:underline"
+                        >
+                          Use sample image URL
+                        </button>
+                      )}
+                    </div>
                   )}
                   {requiredVars.map(([group, key, label]) => (
                     <VariableRow

@@ -6,7 +6,10 @@ const { ApiError } = require('./service');
 function createWorkspaceResolver(prisma) {
   return async function resolveWorkspaceId(user) {
     if (user.workspaceId) return user.workspaceId;
-    const workspace = await prisma.workspace.findFirst({ orderBy: { createdAt: 'asc' }, select: { id: true } });
+    const workspace = (await prisma.workspace.findFirst({
+      where: { name: 'Default Workspace' },
+      select: { id: true },
+    })) || (await prisma.workspace.findFirst({ select: { id: true } }));
     if (!workspace) throw new ApiError(403, 'NO_WORKSPACE', 'No workspace is available for this account');
     await prisma.user.updateMany({ where: { id: user.id, workspaceId: null }, data: { workspaceId: workspace.id } });
     user.workspaceId = workspace.id;
@@ -36,7 +39,13 @@ function createCampaignsRouter({ service, authenticate, authorize, resolveWorksp
   const body = (req) => (req.body && typeof req.body === 'object' ? req.body : {});
 
   router.get('/connections', handler(async (req, res, ws) => res.json({ connections: await service.listConnections(ws) })));
-  router.get('/connections/:id/templates', handler(async (req, res, ws) => res.json({ templates: await service.listTemplates(ws, req.params.id) })));
+  router.get('/connections/:id/templates', handler(async (req, res, ws) => {
+    const q = req.query.query || req.query.name || req.query.id || req.query.templateId;
+    if (q) {
+      return res.json({ templates: await service.fetchTemplateByIdOrName(ws, req.params.id, q) });
+    }
+    res.json({ templates: await service.listTemplates(ws, req.params.id) });
+  }));
   router.post('/preview-recipients', handler(async (req, res, ws) => res.json(await service.previewRecipients(ws, { ...body(req).recipients, connectionId: body(req).connectionId }))));
   router.post('/preview-message', handler(async (req, res, ws) => res.json(await service.previewMessage(ws, body(req)))));
   router.post('/', handler(async (req, res, ws) => {

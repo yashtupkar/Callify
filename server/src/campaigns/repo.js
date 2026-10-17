@@ -58,23 +58,35 @@ const repo = {
     return prisma().whatsAppCampaign.findUnique({ where: { id } });
   },
   async listCampaigns(workspaceId, { limit = 50, offset = 0 } = {}) {
-    const [items, total] = await Promise.all([
-      prisma().whatsAppCampaign.findMany({ where: { workspaceId }, orderBy: { createdAt: 'desc' }, take: limit, skip: offset }),
-      prisma().whatsAppCampaign.count({ where: { workspaceId } }),
-    ]);
-    return { items, total };
+    if (!prisma()?.whatsAppCampaign) return { items: [], total: 0 };
+    try {
+      const [items, total] = await Promise.all([
+        prisma().whatsAppCampaign.findMany({ where: { workspaceId }, orderBy: { createdAt: 'desc' }, take: limit, skip: offset }),
+        prisma().whatsAppCampaign.count({ where: { workspaceId } }),
+      ]);
+      return { items, total };
+    } catch (error) {
+      if (error.code === 'P2021' || error.message?.includes('does not exist')) return { items: [], total: 0 };
+      throw error;
+    }
   },
   async counts(campaignIds) {
     const ids = Array.isArray(campaignIds) ? campaignIds : [campaignIds];
-    const groups = await prisma().whatsAppCampaignRecipient.groupBy({
-      by: ['campaignId', 'status'],
-      where: { campaignId: { in: ids } },
-      _count: { _all: true },
-    });
     const out = {};
     for (const id of ids) out[id] = {};
-    for (const g of groups) out[g.campaignId][g.status] = g._count._all;
-    return out;
+    if (!prisma()?.whatsAppCampaignRecipient) return out;
+    try {
+      const groups = await prisma().whatsAppCampaignRecipient.groupBy({
+        by: ['campaignId', 'status'],
+        where: { campaignId: { in: ids } },
+        _count: { _all: true },
+      });
+      for (const g of groups) out[g.campaignId][g.status] = g._count._all;
+      return out;
+    } catch (error) {
+      if (error.code === 'P2021' || error.message?.includes('does not exist')) return out;
+      throw error;
+    }
   },
   async listRecipients(campaignId, { status, limit = 100, offset = 0 } = {}) {
     const where = { campaignId, ...(status ? { status } : {}) };
@@ -110,11 +122,23 @@ const repo = {
     return result.count;
   },
 
-  runningCampaigns() {
-    return prisma().whatsAppCampaign.findMany({ where: { status: C.RUNNING } });
+  async runningCampaigns() {
+    if (!prisma()?.whatsAppCampaign) return [];
+    try {
+      return await prisma().whatsAppCampaign.findMany({ where: { status: C.RUNNING } });
+    } catch (error) {
+      if (error.code === 'P2021' || error.message?.includes('does not exist')) return [];
+      throw error;
+    }
   },
   async countQueued(campaignId) {
-    return prisma().whatsAppCampaignRecipient.count({ where: { campaignId, status: R.QUEUED } });
+    if (!prisma()?.whatsAppCampaignRecipient) return 0;
+    try {
+      return await prisma().whatsAppCampaignRecipient.count({ where: { campaignId, status: R.QUEUED } });
+    } catch (error) {
+      if (error.code === 'P2021' || error.message?.includes('does not exist')) return 0;
+      throw error;
+    }
   },
 
   async claimRecipients(campaignId, { limit, workerId, leaseMs, now = new Date() }) {
@@ -181,16 +205,24 @@ const repo = {
 
   /** Rows whose worker died after calling the provider: outcome unknown, never auto-resent. */
   async recoverExpired(now = new Date()) {
-    const unknown = await prisma().whatsAppCampaignRecipient.updateMany({
-      where: { status: R.QUEUED, sendStartedAt: { not: null }, lockedUntil: { lt: now } },
-      data: {
-        status: R.FAILED, failedAt: now, lockedBy: null, lockedUntil: null,
-        errorCode: 'UNKNOWN_OUTCOME',
-        errorMessage: 'Worker stopped while sending; the message may or may not have been sent. Not retried to avoid duplicates.',
-      },
-    });
-    await prisma().whatsAppCampaignStatusEvent.deleteMany({ where: { createdAt: { lt: new Date(now.getTime() - STASH_TTL_MS) } } });
-    return { unknown: unknown.count };
+    if (!prisma()?.whatsAppCampaignRecipient) return { unknown: 0 };
+    try {
+      const unknown = await prisma().whatsAppCampaignRecipient.updateMany({
+        where: { status: R.QUEUED, sendStartedAt: { not: null }, lockedUntil: { lt: now } },
+        data: {
+          status: R.FAILED, failedAt: now, lockedBy: null, lockedUntil: null,
+          errorCode: 'UNKNOWN_OUTCOME',
+          errorMessage: 'Worker stopped while sending; the message may or may not have been sent. Not retried to avoid duplicates.',
+        },
+      });
+      if (prisma()?.whatsAppCampaignStatusEvent) {
+        await prisma().whatsAppCampaignStatusEvent.deleteMany({ where: { createdAt: { lt: new Date(now.getTime() - STASH_TTL_MS) } } });
+      }
+      return { unknown: unknown.count };
+    } catch (error) {
+      if (error.code === 'P2021' || error.message?.includes('does not exist')) return { unknown: 0 };
+      throw error;
+    }
   },
 
   async countSentSince(connectionId, since) {

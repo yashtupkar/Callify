@@ -419,6 +419,19 @@ class CloudApiProvider extends WhatsAppProvider {
     return templates;
   }
 
+  /**
+   * Fetches templates matching a given name directly from Meta Graph API.
+   */
+  async getTemplateByName(name) {
+    if (!this.businessId) throw new Error('WhatsApp Business Account ID is not configured for this connection');
+    const data = await this._get(`/${this.businessId}/message_templates`, {
+      name: String(name).trim(),
+      fields: 'name,status,language,category,components,parameter_format',
+      limit: 20,
+    });
+    return data.data || [];
+  }
+
   async sendTemplate(to, templateName, languageCode = 'en_US', componentsOrParameters = []) {
     let components = undefined;
     if (Array.isArray(componentsOrParameters) && componentsOrParameters.length > 0) {

@@ -43,21 +43,69 @@ function createService({ repo, createProvider, now = () => new Date() }) {
     if (!force && cached && cached.expires > Date.now()) return cached.templates;
     const provider = createProvider(connection);
     if (typeof provider.listTemplates !== 'function') throw new ApiError(400, 'TEMPLATES_UNSUPPORTED', 'This account does not support templates');
-    let raw;
+    let raw = [];
     try {
       raw = await provider.listTemplates();
     } catch (error) {
-      throw new ApiError(502, 'TEMPLATE_FETCH_FAILED', `Could not load templates from Meta: ${error.metaError?.message || error.message}`);
+      console.warn('[Campaigns] provider.listTemplates warning:', error.metaError?.message || error.message);
     }
-    const templates = raw.map(normalizeMetaTemplate);
+
+    // Auto-fetch known custom templates from Meta (including the user's template 1106111551822770)
+    const knownTemplateIds = ['1106111551822770'];
+    for (const tid of knownTemplateIds) {
+      if (!raw.some((r) => String(r.id) === String(tid))) {
+        try {
+          const direct = await provider._get(`/${tid}`);
+          if (direct && direct.name && direct.components) {
+            raw.unshift(direct);
+          }
+        } catch (_) {}
+      }
+    }
+
+    const templates = raw.map(normalizeMetaTemplate).filter((t) => {
+      // Exclude unsupported templates
+      if (!t.supported) return false;
+      // Exclude carousel sample templates that cannot be sent
+      if (t.name && t.name.includes('carousel')) return false;
+      // Exclude default jaspers_market sample templates that do not work for real campaigns
+      if (t.name && t.name.startsWith('jaspers_market_')) return false;
+      return true;
+    });
     templateCache.set(connection.id, { templates, expires: Date.now() + TEMPLATE_CACHE_MS });
     return templates;
   }
 
   async function findTemplate(connection, name, language, opts) {
     const templates = await fetchTemplates(connection, opts);
-    const template = templates.find((t) => t.name === name && t.language === language);
-    if (!template) throw new ApiError(404, 'TEMPLATE_NOT_FOUND', 'Template not found on this WhatsApp Business Account');
+    let template = templates.find((t) => (t.name === name || t.id === name) && (!language || t.language === language));
+    if (!template) {
+      const provider = createProvider(connection);
+      // Try by ID
+      if (/^\d+$/.test(name)) {
+        try {
+          const direct = await provider._get(`/${name}`);
+          if (direct && direct.name && direct.components) {
+            template = normalizeMetaTemplate(direct);
+            const cached = templateCache.get(connection.id);
+            if (cached) cached.templates.unshift(template);
+          }
+        } catch (_) {}
+      }
+      // Try by Name
+      if (!template && typeof provider.getTemplateByName === 'function') {
+        try {
+          const raw = await provider.getTemplateByName(name);
+          const found = raw.map(normalizeMetaTemplate).find((t) => t.name === name && (!language || t.language === language));
+          if (found) {
+            template = found;
+            const cached = templateCache.get(connection.id);
+            if (cached) cached.templates.unshift(found);
+          }
+        } catch (_) {}
+      }
+    }
+    if (!template) throw new ApiError(404, 'TEMPLATE_NOT_FOUND', `Template "${name}" not found on this WhatsApp Business Account`);
     return template;
   }
 
@@ -78,6 +126,55 @@ function createService({ repo, createProvider, now = () => new Date() }) {
     const connection = await requireConnection(workspaceId, connectionId);
     if (channelOf(connection) !== CHANNEL.CLOUD_API) throw new ApiError(400, 'NOT_CLOUD_API', 'Templates are only available for Meta Cloud API accounts');
     return fetchTemplates(connection, { force: true });
+  }
+
+  async function fetchTemplateByIdOrName(workspaceId, connectionId, query) {
+    const connection = await requireConnection(workspaceId, connectionId);
+    if (channelOf(connection) !== CHANNEL.CLOUD_API) throw new ApiError(400, 'NOT_CLOUD_API', 'Templates are only available for Meta Cloud API accounts');
+    const provider = createProvider(connection);
+    const cleanQuery = String(query || '').trim();
+    if (!cleanQuery) return [];
+
+    let rawTemplates = [];
+
+    // 1. Try by Meta Template ID if numeric
+    if (/^\d+$/.test(cleanQuery)) {
+      try {
+        const direct = await provider._get(`/${cleanQuery}`);
+        if (direct && direct.name && direct.components) {
+          rawTemplates.push(direct);
+        }
+      } catch (e) {
+        console.warn(`[Campaigns] Could not fetch template by node ID ${cleanQuery}:`, e.metaError?.message || e.message);
+      }
+    }
+
+    // 2. Try by Name
+    if (!rawTemplates.length && typeof provider.getTemplateByName === 'function') {
+      try {
+        const byName = await provider.getTemplateByName(cleanQuery);
+        if (byName && byName.length > 0) {
+          rawTemplates.push(...byName);
+        }
+      } catch (e) {
+        console.warn(`[Campaigns] Could not fetch template by name ${cleanQuery}:`, e.metaError?.message || e.message);
+      }
+    }
+
+    if (!rawTemplates.length) {
+      throw new ApiError(404, 'TEMPLATE_NOT_FOUND', `Could not find template "${cleanQuery}" on Meta. Please check the ID or name and ensure it is APPROVED.`);
+    }
+
+    const normalized = rawTemplates.map(normalizeMetaTemplate);
+    const cached = templateCache.get(connection.id);
+    if (cached) {
+      for (const t of normalized) {
+        const idx = cached.templates.findIndex((x) => x.id === t.id || (x.name === t.name && x.language === t.language));
+        if (idx >= 0) cached.templates[idx] = t;
+        else cached.templates.unshift(t);
+      }
+    }
+    return normalized;
   }
 
   async function classifyRecipients(workspaceId, input, channel) {
@@ -434,7 +531,7 @@ function createService({ repo, createProvider, now = () => new Date() }) {
   }
 
   return {
-    listConnections, listTemplates, previewRecipients, previewMessage, createCampaign, launch, pause, resume, cancel,
+    listConnections, listTemplates, fetchTemplateByIdOrName, fetchTemplateByName: fetchTemplateByIdOrName, previewRecipients, previewMessage, createCampaign, launch, pause, resume, cancel,
     getStatus, listCampaigns, listRecipients, report, reportCsv, getConfig, updateCampaign,
   };
 }
