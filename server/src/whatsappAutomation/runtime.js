@@ -84,14 +84,28 @@ async function getOrCreateSession({ automation, connection, contactWaId, contact
   manager.contactWaId = contactWaId;
   manager.timezone = automation.timezone;
 
+  // Hydrate previous cumulative usage & cost from persisted session
+  if (persisted) {
+    if (persisted.llmCost) manager.usageTracker.usage.llmCost = Number(persisted.llmCost);
+    if (persisted.llmPromptTokens) manager.usageTracker.usage.llmPromptTokens = Number(persisted.llmPromptTokens);
+    if (persisted.llmCompletionTokens) manager.usageTracker.usage.llmCompletionTokens = Number(persisted.llmCompletionTokens);
+    manager.usageTracker.updateTotalCost();
+  }
+
   // Only tools in this registry are exposed to the LLM or executable.
   const registry = buildRegistryForAutomation(automation);
   manager.setRegistry(registry);
+  manager.toolExecutor.automationId = automation.id;
+  manager.toolExecutor.sessionId = persisted?.id || null;
+  manager.toolExecutor.contactWaId = contactWaId;
+  manager.toolExecutor.connectionId = connection.id;
   Object.assign(manager.toolExecutor.context, {
     workspaceId: automation.workspaceId,
     automationId: automation.id,
     timezone: automation.timezone,
     sessionId: persisted?.id || null,
+    contactWaId,
+    connectionId: connection.id,
   });
   const config = {
     systemPrompt: buildWhatsAppPrompt(automation, {
@@ -251,7 +265,8 @@ async function handleMessages({ automation, connection, provider, messages, repl
     const STOP_COMMANDS = new Set(['stop', 'unsubscribe', 'cancel', 'quit', 'optout', 'end']);
     const START_COMMANDS = new Set(['start', 'unstop', 'subscribe']);
 
-    for (const [index, message] of contactMessages.entries()) {
+    try {
+      for (const [index, message] of contactMessages.entries()) {
       const rawText = String(message.text || '').trim().toLowerCase();
 
       // Handle STOP command
@@ -368,8 +383,10 @@ async function handleMessages({ automation, connection, provider, messages, repl
         await entry.conversationManager.handleUserUtterance(`[User sent a ${message.type || 'message'}]`);
       }
     }
-    await store.set(connection, automation, contactWaId, entry);
-    if (inboxAvailable) await inbox.markDone(connection.id, messageIds).catch((err) => console.error('[WhatsAppAutomation] Inbox markDone failed:', err.message));
+    } finally {
+      await store.set(connection, automation, contactWaId, entry).catch(() => {});
+      if (inboxAvailable) await inbox.markDone(connection.id, messageIds).catch(() => {});
+    }
   });
 
   const results = await mapLimit([...grouped], CONTACT_CONCURRENCY, processContact);
@@ -486,10 +503,6 @@ async function _checkAutoReply({ autoReplyService, message, automation, connecti
     }
 
     return { handled: true };
-  }
-
-  if (autoReplyService.rules.length > 0) {
-    console.log(`[WhatsAppAutomation] No auto-reply matched for ${contactWaId}. Trigger: ${triggerType}, Key: "${triggerKey}", Value: "${triggerValue}", Text: "${userText}", isFirst: ${isFirstMessage}`);
   }
 
   return { handled: false };

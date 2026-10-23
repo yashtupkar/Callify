@@ -243,7 +243,7 @@ const repo = {
           where: { providerMessageId: update.providerMessageId },
           create: { connectionId, providerMessageId: update.providerMessageId, status: update.status, errorCode: update.errorCode || null, errorMessage: update.errorMessage || null, occurredAt: update.occurredAt || new Date() },
           update: {},
-        });
+        }).catch(() => {});
         // The worker may have stored the id between our lookup and the stash; re-check once.
         const raced = await prisma().whatsAppCampaignRecipient.findUnique({ where: { providerMessageId: update.providerMessageId }, select: { id: true } });
         if (!raced) return 'stashed';

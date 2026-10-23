@@ -135,6 +135,11 @@ model WhatsAppAutomationSession {
   llmCalls         Int @default(0)
   toolCalls        Int @default(0)
 
+  // Real LLM Usage & Cost Tracking
+  llmCost             Float @default(0.0)
+  llmPromptTokens     Int   @default(0)
+  llmCompletionTokens Int   @default(0)
+
   automation WhatsAppAutomation      @relation(fields: [automationId], references: [id], onDelete: Cascade)
   connection WhatsAppConnection      @relation(fields: [connectionId], references: [id], onDelete: Cascade)
   logs       WhatsAppAutomationLog[]

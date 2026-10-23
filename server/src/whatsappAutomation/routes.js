@@ -703,6 +703,9 @@ router.get('/:automationId/stats/messages', requireAdmin, async (req, res) => {
         messagesFailed: true,
         llmCalls: true,
         toolCalls: true,
+        llmCost: true,
+        llmPromptTokens: true,
+        llmCompletionTokens: true,
       },
     });
 
@@ -713,10 +716,25 @@ router.get('/:automationId/stats/messages', requireAdmin, async (req, res) => {
         acc.failed += s.messagesFailed || 0;
         acc.llmCalls += s.llmCalls || 0;
         acc.toolCalls += s.toolCalls || 0;
+        acc.llmCost += Number(s.llmCost || 0);
+        acc.llmPromptTokens += s.llmPromptTokens || 0;
+        acc.llmCompletionTokens += s.llmCompletionTokens || 0;
+        acc.totalTokens += (s.llmPromptTokens || 0) + (s.llmCompletionTokens || 0);
         return acc;
       },
-      { sent: 0, received: 0, failed: 0, llmCalls: 0, toolCalls: 0 }
+      {
+        sent: 0,
+        received: 0,
+        failed: 0,
+        llmCalls: 0,
+        toolCalls: 0,
+        llmCost: 0,
+        llmPromptTokens: 0,
+        llmCompletionTokens: 0,
+        totalTokens: 0,
+      }
     );
+    totals.llmCost = Number(totals.llmCost.toFixed(6));
 
     res.json({ stats: totals, sessionCount: sessions.length });
   } catch (error) {

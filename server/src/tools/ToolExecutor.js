@@ -101,7 +101,7 @@ class ToolExecutor {
    * @param {object} args
    */
   async handle(toolName, args, preamble, llmToolCallId, shouldReprompt = true) {
-    console.log(`[ToolExecutor] Tool called: ${toolName}`, args);
+    console.log(`[ToolExecutor] 🛠️ [Tool Calling] Tool: "${toolName}" | CallID: ${llmToolCallId || 'auto'}`, JSON.stringify(args || {}, null, 2));
     this.usageTracker.incrementToolCall();
 
     // Increment toolCalls counter for WhatsApp sessions

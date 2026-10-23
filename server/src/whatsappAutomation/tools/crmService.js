@@ -385,24 +385,21 @@ function formatOpenRecordsPrompt(openRecords = [], timezone = 'Asia/Kolkata') {
     const dateStr = formatRecordDate(r.createdAt, timezone);
     const dueStr = r.dueDate ? ` (Due/Scheduled: ${formatRecordDate(r.dueDate, timezone)})` : '';
     const statusNote = isOld
-      ? 'OLDER REQUEST: Customer may be given the option to re-book / submit again'
-      : 'RECENT ACTIVE REQUEST: Team will reach out; do not create duplicate';
-    return `- [Record ${i + 1}] Ref: ${r.reference} | Type: ${r.type} (${cat}) | Title: "${r.title}" | Created: ${dateStr}${dueStr} | Status: ${statusNote}`;
+      ? 'OLDER RECORD (>24h ago): If user tries to re-book, offer to rebook or follow up'
+      : 'RECENT ACTIVE RECORD (<24h ago): If user tries to book of same kind, remind team will reach out';
+    return `- [Existing Record ${i + 1}] Ref: ${r.reference} | Type: ${r.type} (${cat}) | Title: "${r.title}" | Created: ${dateStr}${dueStr} | Status: ${statusNote}`;
   }).join('\n');
 
-  return `CUSTOMER OPEN RECORDS CONTEXT:
-The customer currently has the following OPEN records on file:
+  return `CUSTOMER EXISTING CRM RECORDS (BACKGROUND REFERENCE ONLY):
 ${lines}
 
-CRITICAL RULES FOR BOOKINGS & COMPLAINTS:
-1. If the customer asks to make a booking, appointment, or file a complaint:
-   - If they have a RECENT open record of the same kind:
-     DO NOT start collecting details or book again. Give reply that they already have an open booking/complaint and the team will reach out to them:
-     "You already have an open booking [or complaint] (Reference: <ref>). Our team is working on it and will reach out to you shortly."
-   - If their open booking/complaint is MORE OLD:
-     Inform them that they have an open booking/complaint from <date> (Reference: <ref>), and give them the option to book again or follow up on the existing one:
-     "You have an open booking [or complaint] from <date> (Reference: <ref>). Since it has been a while, would you like to book again or follow up on your existing request?"
-     Only proceed with booking if the customer explicitly says they want to book again.`;
+STRICT BEHAVIORAL INSTRUCTIONS:
+1. ALWAYS prioritize answering the customer's actual message (e.g. general questions about solar products, services, pricing, subsidies, FAQs, greetings).
+2. DO NOT mention these records if the customer is asking general questions, browsing, or saying hello. Answer their question directly without bringing up old records.
+3. ONLY reference an open record if:
+   a) The customer explicitly asks to BOOK or SCHEDULE an appointment/survey of this type.
+   b) The customer explicitly asks to FILE a complaint of this type.
+   c) The customer explicitly ASKS for their status or updates on their previous request (e.g., "what is the status of my booking?").`;
 }
 
 module.exports = {

@@ -89,6 +89,20 @@ async function recoverPending(processFn, { now = Date.now() } = {}) {
   return replayed;
 }
 
+/** Drops pending rows without replaying them so customers do not receive repeated messages */
+async function dropStalePending(olderThanMs = 10000) {
+  try {
+    const cutoff = new Date(Date.now() - olderThanMs);
+    const result = await table().updateMany({
+      where: { status: 'pending', updatedAt: { lt: cutoff } },
+      data: { status: 'dropped' },
+    });
+    return result.count;
+  } catch (_) {
+    return 0;
+  }
+}
+
 /** Deletes finished rows older than `olderThanMs` to keep the table small. */
 async function purge(olderThanMs = 7 * 24 * 60 * 60 * 1000) {
   const result = await table().deleteMany({
@@ -97,4 +111,4 @@ async function purge(olderThanMs = 7 * 24 * 60 * 60 * 1000) {
   return result.count;
 }
 
-module.exports = { claim, markDone, markDropped, countRecent, recoverPending, purge, MAX_ATTEMPTS, STALE_MS };
+module.exports = { claim, markDone, markDropped, dropStalePending, countRecent, recoverPending, purge, MAX_ATTEMPTS, STALE_MS };

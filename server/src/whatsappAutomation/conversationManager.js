@@ -87,13 +87,63 @@ class WhatsAppConversationManager {
       });
     });
 
+    this.llm.on('token_usage', async (usageObj) => {
+      try {
+        const cost = Number(usageObj.cost || 0);
+        const promptTokens = Number(usageObj.prompt_tokens || 0);
+        const completionTokens = Number(usageObj.completion_tokens || 0);
+
+        // 1. Accumulate into in-memory usageTracker for this session
+        this.usageTracker.addLLMUsage(usageObj);
+
+        // 2. Add cost to previous cost and increment tokens on the DB session
+        if (this.channel?.instanceId && this.channel?.contactWaId) {
+          await dbService.prisma.whatsAppAutomationSession.updateMany({
+            where: { connectionId: this.channel.instanceId, contactWaId: this.channel.contactWaId },
+            data: {
+              llmCost: { increment: cost },
+              llmPromptTokens: { increment: promptTokens },
+              llmCompletionTokens: { increment: completionTokens },
+            },
+          }).catch((err) => {
+            console.warn('[WhatsAppConversationManager] Failed to increment session cost:', err.message);
+          });
+        }
+
+        // 3. Log real usage to automation logs
+        if (this.logger) {
+          this.logger.info('llm', 'llm_usage', `LLM request completed ($${cost.toFixed(6)})`, {
+            promptTokens,
+            completionTokens,
+            totalTokens: promptTokens + completionTokens,
+            cost,
+            model: usageObj.model || this.llm.model,
+            sessionId: this.sessionId,
+            contactWaId: this.contactWaId,
+          }).catch(() => {});
+        }
+
+        console.log(`[WhatsAppConversationManager] LLM Request Cost: $${cost.toFixed(6)}, Session Total: $${this.usageTracker.usage.llmCost.toFixed(6)} (${this.usageTracker.usage.llmPromptTokens} prompt + ${this.usageTracker.usage.llmCompletionTokens} completion tokens)`);
+      } catch (err) {
+        console.error('[WhatsAppConversationManager] Error tracking LLM token usage:', err.message);
+      }
+    });
+
     this.llm.on('tool_calls', async (calls, fullReply) => {
+      console.log(`[WhatsAppConversationManager] 🛠️ Tool calls requested by LLM (${calls.length}): [${calls.map(c => c.name).join(', ')}]`);
       await this.toolExecutor.handleBatch(calls, fullReply);
     });
 
     this.llm.on('llm_error', (error) => {
       console.error('[WhatsAppConversationManager] LLM error:', error);
     });
+  }
+
+  getUsage() {
+    return {
+      ...this.usageTracker.usage,
+      cost: this.usageTracker.getCost()
+    };
   }
 
   async start({ systemPrompt, firstMessage }) {
@@ -199,12 +249,14 @@ class WhatsAppConversationManager {
         }).catch(() => {}); // Fire and forget
       }
 
-      // Fetch open records for real-time customer context injection
+      // Fetch open records for real-time customer context injection ONLY when relevant to booking, complaints, or status checks
       let contextInjection = null;
       try {
         const autoId = this.automationId || this.channel?.automationId;
         const waId = this.contactWaId || this.channel?.contactWaId;
-        if (autoId && waId) {
+        const isBookingOrSupport = hasBookingOrComplaintIntent(content);
+
+        if (isBookingOrSupport && autoId && waId) {
           const openRecords = await crm.getOpenRecordsForWaId(autoId, waId);
           if (openRecords && openRecords.length > 0) {
             contextInjection = {
@@ -218,6 +270,9 @@ class WhatsAppConversationManager {
       }
 
       this.toolExecutor.contextInjection = contextInjection;
+
+      const availableTools = this.registry.names();
+      console.log(`[WhatsAppConversationManager] 💬 Processing utterance from ${this.contactWaId || 'contact'} with ${availableTools.length} tools available: [${availableTools.join(', ')}]`);
 
       await this.llm.generateResponse(
         this.getRecentTranscript(),
@@ -286,4 +341,22 @@ class WhatsAppConversationManager {
   }
 }
 
-module.exports = { WhatsAppConversationManager };
+function hasBookingOrComplaintIntent(text) {
+  if (!text || typeof text !== 'string') return false;
+  const lower = text.toLowerCase().trim();
+  const keywords = [
+    'book', 'booking', 'appointment', 'schedule', 'reschedule', 'visit', 'survey',
+    'demo', 'slot', 'reserve', 'consultation',
+    'complaint', 'complain', 'issue', 'problem', 'not working', 'fault', 'damaged',
+    'defect', 'grievance', 'ticket', 'repair',
+    'status', 'track', 'my request', 'my booking', 'my appointment', 'my complaint',
+    'reference', 'update on', 'what happened to', 'check request', 'check booking',
+    'rebook', 'book again', 'yes', 'confirm', 'proceed', 'go ahead', 'cancel'
+  ];
+  return keywords.some((kw) => {
+    const rx = new RegExp(`(^|\\b)${kw}(\\b|$)`, 'i');
+    return rx.test(lower);
+  });
+}
+
+module.exports = { WhatsAppConversationManager, hasBookingOrComplaintIntent };

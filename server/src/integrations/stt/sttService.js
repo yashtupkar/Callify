@@ -70,6 +70,16 @@ class STTService extends STTProvider {
                   this.emit('transcript', transcript, false);
                 }
               }
+            } else if (parsed.type === 'Metadata') {
+              if (parsed.duration !== undefined && parsed.duration > 0) {
+                this.emit('metadata', parsed);
+                this.emit('real_usage', {
+                  duration: parsed.duration,
+                  requestId: parsed.request_id,
+                  channels: parsed.channels,
+                  models: parsed.models
+                });
+              }
             }
           } catch (e) {
             console.error('[STTService] Error parsing Deepgram message', e);
@@ -113,11 +123,19 @@ class STTService extends STTProvider {
       this.keepAliveInterval = null;
     }
     if (this.isConnected && this.ws) {
-      // Send empty string to indicate end of stream in Deepgram
       if (this.ws.readyState === WebSocket.OPEN) {
-        this.ws.send(new Uint8Array(0));
+        try {
+          this.ws.send(JSON.stringify({ type: 'CloseStream' }));
+          this.ws.send(new Uint8Array(0));
+        } catch (_) {}
       }
-      this.ws.close();
+      setTimeout(() => {
+        try {
+          if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
+            this.ws.close();
+          }
+        } catch (_) {}
+      }, 250);
       this.isConnected = false;
     }
   }

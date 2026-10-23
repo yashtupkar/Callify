@@ -32,9 +32,9 @@ async function _write({ automationId, connectionId, contactWaId, sessionId, leve
   const entry = {
     id: randomUUID(),
     automationId,
-    connectionId: connectionId || null,
-    contactWaId: contactWaId || null,
-    sessionId: sessionId || null,
+    connectionId: connectionId || metadata?.connectionId || null,
+    contactWaId: contactWaId || metadata?.contactWaId || null,
+    sessionId: sessionId || metadata?.sessionId || null,
     level,
     category,
     event,
@@ -42,6 +42,10 @@ async function _write({ automationId, connectionId, contactWaId, sessionId, leve
     metadata: metadata || null,
     createdAt: new Date(),
   };
+
+  if (category === 'tool') {
+    console.log(`[WhatsAppAutomationLog] 🛠️ [TOOL] ${message} | Contact: ${entry.contactWaId || 'unknown'}`);
+  }
 
   // In-memory ring buffer
   let list = recentLogs.get(automationId);

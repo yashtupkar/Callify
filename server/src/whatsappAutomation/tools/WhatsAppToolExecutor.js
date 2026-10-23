@@ -28,13 +28,35 @@ class WhatsAppToolExecutor {
 
   resetTurn() { this.rounds = 0; }
 
+  getLogger() {
+    const autoId = this.automationId || this.context?.automationId;
+    if (autoId) {
+      try {
+        const { WhatsAppAutomationLogService } = require('../logService');
+        return WhatsAppAutomationLogService.build(autoId, {
+          connectionId: this.connectionId || this.context?.connectionId,
+          contactWaId: this.contactWaId || this.context?.contactWaId,
+          sessionId: this.sessionId || this.context?.sessionId,
+        });
+      } catch (_) {
+        return this.logger;
+      }
+    }
+    return this.logger;
+  }
+
   async handle(toolName, args, preamble, llmToolCallId, shouldReprompt = true) {
     const callId = llmToolCallId || `call_${Math.random().toString(36).slice(2, 10)}`;
+    const contactWa = this.contactWaId || this.context?.contactWaId || 'unknown';
+    console.log(`[WhatsAppToolExecutor] 🛠️ [Tool Calling] Tool: "${toolName}" | CallID: ${callId} | Contact: ${contactWa}`);
+    console.log(`[WhatsAppToolExecutor] 📥 [Tool Arguments] "${toolName}":`, JSON.stringify(args || {}, null, 2));
+
     let result;
+    let durationMs = 0;
     const problem = this.registry.validate(toolName, args);
     if (problem) {
       const available = this.registry.names().join(', ');
-      console.warn(`[WhatsAppToolExecutor] Rejected "${toolName}": ${problem}`);
+      console.warn(`[WhatsAppToolExecutor] ⚠️ Rejected "${toolName}": ${problem}`);
       result = {
         success: false,
         error: problem,
@@ -44,9 +66,13 @@ class WhatsAppToolExecutor {
       };
     } else {
       try {
+        const startTime = Date.now();
         result = await this.registry.execute(toolName, args, this.context);
+        durationMs = Date.now() - startTime;
+        const isOk = result?.success !== false && !result?.error;
+        console.log(`[WhatsAppToolExecutor] ${isOk ? '✅' : '❌'} [Tool Result] "${toolName}" finished in ${durationMs}ms:`, JSON.stringify(result));
       } catch (error) {
-        console.error(`[WhatsAppToolExecutor] "${toolName}" failed:`, error.message);
+        console.error(`[WhatsAppToolExecutor] ❌ [Tool Error] "${toolName}" failed:`, error.message);
         result = { success: false, error: error.message, message: 'The action failed. Do not claim it succeeded.' };
       }
     }
@@ -64,20 +90,22 @@ class WhatsAppToolExecutor {
     this.onToolEvent({ toolName, args, result, ok: result?.success !== false && !result?.error });
 
     // Log tool call to automation logs
-    if (this.logger && this.automationId) {
-      try {
-        await this.logger.info('tool', 'tool_call', `Tool "${toolName}" executed`, {
-          toolName,
-          args,
-          result: result?.success !== false ? 'success' : 'error',
-          error: result?.error,
-          callId,
-          sessionId: this.sessionId,
-          contactWaId: this.contactWaId,
-        });
-      } catch (logError) {
+    const logger = this.getLogger();
+    if (logger) {
+      const isOk = result?.success !== false && !result?.error;
+      logger.info('tool', 'tool_call', `Tool "${toolName}" ${isOk ? 'succeeded' : 'failed'}`, {
+        toolName,
+        args,
+        result: isOk ? 'success' : 'error',
+        output: result,
+        error: result?.error || null,
+        durationMs,
+        callId,
+        sessionId: this.sessionId || this.context?.sessionId,
+        contactWaId: this.contactWaId || this.context?.contactWaId,
+      }).catch((logError) => {
         console.error('[WhatsAppToolExecutor] Failed to log tool call:', logError.message);
-      }
+      });
     }
 
     if (!shouldReprompt) return;
@@ -142,11 +170,16 @@ class WhatsAppToolExecutor {
         console.error('[WhatsAppToolExecutor] Invalid arguments:', err.message);
       }
 
+      const contactWa = this.contactWaId || this.context?.contactWaId || 'unknown';
+      console.log(`[WhatsAppToolExecutor] 🛠️ [Tool Calling] Tool: "${call.name}" | CallID: ${callId} | Contact: ${contactWa}`);
+      console.log(`[WhatsAppToolExecutor] 📥 [Tool Arguments] "${call.name}":`, JSON.stringify(args || {}, null, 2));
+
       let result;
+      let durationMs = 0;
       const problem = this.registry.validate(call.name, args);
       if (problem) {
         const available = this.registry.names().join(', ');
-        console.warn(`[WhatsAppToolExecutor] Rejected "${call.name}": ${problem}`);
+        console.warn(`[WhatsAppToolExecutor] ⚠️ Rejected "${call.name}": ${problem}`);
         result = {
           success: false,
           error: problem,
@@ -156,9 +189,13 @@ class WhatsAppToolExecutor {
         };
       } else {
         try {
+          const startTime = Date.now();
           result = await this.registry.execute(call.name, args, this.context);
+          durationMs = Date.now() - startTime;
+          const isOk = result?.success !== false && !result?.error;
+          console.log(`[WhatsAppToolExecutor] ${isOk ? '✅' : '❌'} [Tool Result] "${call.name}" finished in ${durationMs}ms:`, JSON.stringify(result));
         } catch (error) {
-          console.error(`[WhatsAppToolExecutor] "${call.name}" failed:`, error.message);
+          console.error(`[WhatsAppToolExecutor] ❌ [Tool Error] "${call.name}" failed:`, error.message);
           result = { success: false, error: error.message, message: 'The action failed. Do not claim it succeeded.' };
         }
       }
@@ -178,16 +215,22 @@ class WhatsAppToolExecutor {
 
       this.onToolEvent({ toolName: call.name, args, result, ok: result?.success !== false && !result?.error });
 
-      if (this.logger && this.automationId) {
-        this.logger.info('tool', 'tool_call', `Tool "${call.name}" executed`, {
+      const logger = this.getLogger();
+      if (logger) {
+        const isOk = result?.success !== false && !result?.error;
+        logger.info('tool', 'tool_call', `Tool "${call.name}" ${isOk ? 'succeeded' : 'failed'}`, {
           toolName: call.name,
           args,
-          result: result?.success !== false ? 'success' : 'error',
-          error: result?.error,
+          result: isOk ? 'success' : 'error',
+          output: result,
+          error: result?.error || null,
+          durationMs,
           callId,
-          sessionId: this.sessionId,
-          contactWaId: this.contactWaId,
-        }).catch(() => {});
+          sessionId: this.sessionId || this.context?.sessionId,
+          contactWaId: this.contactWaId || this.context?.contactWaId,
+        }).catch((logError) => {
+          console.error('[WhatsAppToolExecutor] Failed to log tool call:', logError.message);
+        });
       }
     }
 

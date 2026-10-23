@@ -4,7 +4,6 @@ const { LLMService } = require('../integrations/llm/llmService');
 const { TTSProvider } = require('../integrations/tts/ttsProvider');
 const { FishAudioTTSProvider } = require('../integrations/tts/fishAudioTtsProvider');
 const { UsageTracker } = require('./UsageTracker');
-const { CostCalculator } = require('./CostCalculator');
 const { dbService } = require('./DatabaseService');
 const { ttsCache } = require('../integrations/tts/ttsCache');
 const { SarvamTTSProvider } = require('../integrations/tts/sarvamTtsProvider');
@@ -38,7 +37,6 @@ class ConversationManager extends EventEmitter {
     this.tts = this.textOnly ? null : createTTS(providerConfig?.tts);
 
     this.usageTracker = new UsageTracker();
-    this.costCalculator = new CostCalculator();
 
     this.transcript = [];
     this.registry = new ToolRegistry();
@@ -162,6 +160,12 @@ class ConversationManager extends EventEmitter {
       console.error('[ConversationManager] STT Error:', err);
     });
 
+    this.stt.on('metadata', (metadata) => {
+      if (metadata && metadata.duration > 0) {
+        this.usageTracker.setRealSTTDuration(metadata.duration);
+      }
+    });
+
     this.llm.on('llm_token', (token) => {
       // Feed tokens to TTS for streaming speech synthesis
       if (!this.textOnly) this.tts.feedText(token);
@@ -176,7 +180,7 @@ class ConversationManager extends EventEmitter {
     });
 
     this.llm.on('token_usage', (usageObj) => {
-      this.usageTracker.addLLMTokens(usageObj.prompt_tokens, usageObj.completion_tokens);
+      this.usageTracker.addLLMUsage(usageObj);
     });
 
     this.llm.on('llm_error', (err) => {
@@ -184,6 +188,7 @@ class ConversationManager extends EventEmitter {
     });
 
     this.llm.on('tool_calls', async (toolCallEntries, fullReply) => {
+      console.log(`[ConversationManager] 🛠️ Executing ${toolCallEntries.length} tool call(s) for call ${this.callId || 'unknown'}:`, toolCallEntries.map(tc => tc.name).join(', '));
       // Process tool calls sequentially to prevent race conditions on shared DB state
       for (let i = 0; i < toolCallEntries.length; i++) {
         const tc = toolCallEntries[i];
@@ -461,12 +466,12 @@ class ConversationManager extends EventEmitter {
     this.stt.disconnect();
     this.tts.interrupt();
 
-    this.usageTracker.addSTTDuration(this.usageTracker.finalize().callDurationSeconds);
+    this.usageTracker.finalize();
     const usage = this.usageTracker.usage;
-    const cost = this.costCalculator.calculateCost(usage, this.providerConfig);
+    const cost = this.usageTracker.getCost();
 
-    console.log('[ConversationManager] Final Usage:', usage);
-    console.log('[ConversationManager] Estimated Cost:', cost);
+    console.log('[ConversationManager] Final Real Usage:', usage);
+    console.log('[ConversationManager] Real API Cost:', cost);
 
     this.sendToClient({
       type: 'usage.updated',

@@ -112,10 +112,24 @@ class LLMService extends LLMProvider {
 
       for await (const chunk of stream) {
         if (chunk.usage) {
+          const rawCost = chunk.usage.cost;
+          const promptTokens = chunk.usage.prompt_tokens || 0;
+          const completionTokens = chunk.usage.completion_tokens || 0;
+          // Use exact API cost returned by OpenRouter if available, otherwise compute standard model rate
+          const cost = rawCost !== undefined && rawCost !== null
+            ? Number(rawCost)
+            : Number((promptTokens * (0.00015 / 1000) + completionTokens * (0.0006 / 1000)).toFixed(6));
+
           this.emit('token_usage', {
-            prompt_tokens     : chunk.usage.prompt_tokens,
-            completion_tokens : chunk.usage.completion_tokens,
-            total_tokens      : chunk.usage.total_tokens,
+            prompt_tokens     : promptTokens,
+            completion_tokens : completionTokens,
+            total_tokens      : chunk.usage.total_tokens || (promptTokens + completionTokens),
+            cost              : cost,
+            cost_details      : chunk.usage.cost_details || null,
+            prompt_tokens_details: chunk.usage.prompt_tokens_details || null,
+            completion_tokens_details: chunk.usage.completion_tokens_details || null,
+            model             : model,
+            raw_usage         : chunk.usage,
           });
         }
 
@@ -178,6 +192,8 @@ class LLMService extends LLMProvider {
       // ----- Emit completed tool calls -----
       const toolCallEntries = Object.values(toolCallsMap);
       if (toolCallEntries.length > 0) {
+        console.log(`[LLMService] 🛠️ Tool calls detected from model (${toolCallEntries.length}):`, 
+          toolCallEntries.map(tc => `${tc.name}(${tc.argsStr || ''})`).join(', '));
         // Emit all tool calls at once instead of one by one
         this.emit('tool_calls', toolCallEntries, fullReply);
         return; // Don't emit llm_reply_complete when a tool call was made

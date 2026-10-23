@@ -43,73 +43,72 @@ const FILTER_TABS = [
 const TONES = {
   incoming: {
     label: "Incoming",
-    badge: "border-sky-500/40 bg-sky-500/10 text-sky-300",
+    badge: "border-sky-400/60 bg-sky-500/20 text-sky-200",
     arrow: "text-sky-400",
     glyph: "↓",
   },
   outgoing: {
     label: "Outgoing",
-    badge: "border-indigo-500/40 bg-indigo-500/10 text-indigo-300",
-    arrow: "text-indigo-400",
+    badge: "border-orange-400/60 bg-orange-500/20 text-orange-200",
+    arrow: "text-orange-400",
     glyph: "↑",
   },
   auto_reply: {
     label: "Auto-reply",
-    badge: "border-emerald-500/40 bg-emerald-500/10 text-emerald-300",
+    badge: "border-emerald-400/60 bg-emerald-500/20 text-emerald-200",
     arrow: "text-emerald-400",
     glyph: "↑",
   },
   auto_reply_failed: {
     label: "Failed Reply",
-    badge: "border-red-500/40 bg-red-500/10 text-red-300",
-    arrow: "text-red-400",
+    badge: "border-dashed border-rose-400/70 bg-rose-500/15 text-rose-200",
+    arrow: "text-rose-400",
     glyph: "↑",
   },
   llm: {
     label: "AI Response",
-    badge: "border-violet-500/40 bg-violet-500/10 text-violet-300",
+    badge: "border-violet-400/60 bg-violet-500/20 text-violet-200",
     arrow: "text-violet-400",
     glyph: "↑",
   },
   tool: {
     label: "Tool Call",
-    badge: "border-cyan-500/40 bg-cyan-500/10 text-cyan-300",
-    arrow: "text-cyan-400",
+    badge: "border-yellow-400/60 bg-yellow-500/20 text-yellow-200",
+    arrow: "text-yellow-400",
     glyph: "↗",
   },
   handoff: {
     label: "Handoff",
-    badge: "border-amber-500/40 bg-amber-500/10 text-amber-300",
-    arrow: "text-amber-400",
+    badge: "border-fuchsia-400/60 bg-fuchsia-500/20 text-fuchsia-200",
+    arrow: "text-fuchsia-400",
     glyph: "⇄",
   },
   error: {
     label: "Error",
-    badge: "border-red-500/40 bg-red-500/10 text-red-300",
-    arrow: "text-red-400",
+    badge: "border-red-500/80 bg-red-600/30 text-red-100 font-semibold",
+    arrow: "text-red-500",
     glyph: "!",
   },
   status: {
     label: "Status",
-    badge: "border-zinc-700 bg-zinc-800/40 text-zinc-300",
+    badge: "border-zinc-500/60 bg-zinc-600/20 text-zinc-200",
     arrow: "text-zinc-400",
     glyph: "→",
   },
   system: {
     label: "System",
-    badge: "border-zinc-700 bg-zinc-800/40 text-zinc-300",
-    arrow: "text-zinc-400",
+    badge: "border-teal-400/60 bg-teal-500/20 text-teal-200",
+    arrow: "text-teal-400",
     glyph: "→",
   },
 };
 
 const LEVEL_BADGE = {
-  info: "border-sky-500/40 bg-sky-500/10 text-sky-300",
-  warn: "border-amber-500/40 bg-amber-500/10 text-amber-300",
-  error: "border-red-500/40 bg-red-500/10 text-red-300",
-  debug: "border-zinc-700 bg-zinc-800/40 text-zinc-300",
+  info: "border-sky-400/60 bg-sky-500/20 text-sky-200",
+  warn: "border-amber-400/60 bg-amber-500/20 text-amber-200",
+  error: "border-red-500/80 bg-red-600/30 text-red-100",
+  debug: "border-zinc-500/60 bg-zinc-600/20 text-zinc-300",
 };
-
 /* ------------------------------------------------------------------ */
 /* Helpers                                                            */
 /* ------------------------------------------------------------------ */

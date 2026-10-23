@@ -106,12 +106,11 @@ async function replayInboxMessages({ connectionId, messages }) {
   await handleMessages({ automation: connection.automation, connection, provider, messages, replay: true });
 }
 
-/** Replays messages left pending by a crash and trims old inbox rows. */
+/** Cleans stale pending messages and trims old inbox rows without replaying duplicate replies. */
 function startInboxRecovery({ intervalMs = 60000 } = {}) {
   const tick = async () => {
     try {
-      const replayed = await inbox.recoverPending(replayInboxMessages);
-      if (replayed) console.log(`[WhatsAppAutomation] Replayed ${replayed} pending inbound message(s)`);
+      await inbox.dropStalePending(10000);
       await inbox.purge();
     } catch (err) {
       if (err.code !== 'P2021') console.error('[WhatsAppAutomation] Inbox recovery failed:', err.message);
