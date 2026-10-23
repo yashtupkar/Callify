@@ -1078,6 +1078,7 @@ export function useAutomationsController({ onCreated, onRemoved } = {}) {
     confirm,
     actions,
     toggleStatus,
+    instances,
     availableInstances,
   };
 }

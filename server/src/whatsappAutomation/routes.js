@@ -3,7 +3,7 @@ const { dbService } = require('../services/DatabaseService');
 const { authMiddleware, requireAdmin } = require('../middleware/auth');
 const { createWhatsAppAutomationProvider } = require('./factory');
 const { store } = require('./sessionStore');
-const { encryptConnectionSecrets } = require('./secretBox');
+const { encryptConnectionSecrets, decryptConnectionSecrets } = require('./secretBox');
 const { createCrmRouter } = require('./tools/crmRoutes');
 const { BUILT_IN_TOOLS } = require('./tools');
 
@@ -147,8 +147,71 @@ router.get('/', async (req, res) => {
   try {
     const workspaceId = await resolveWorkspaceId(req);
     const where = { workspaceId };
-    const automations = await dbService.prisma.whatsAppAutomation.findMany({ where, include: { connections: true, tools: true, autoReplies: true } });
-    res.json({ automations: automations.map(automation => ({ ...automation, connections: automation.connections.map(scrub) })) });
+    const automations = await dbService.prisma.whatsAppAutomation.findMany({
+      where,
+      include: {
+        connections: true,
+        tools: true,
+        autoReplies: true,
+        _count: {
+          select: {
+            sessions: true,
+            contacts: true,
+          },
+        },
+        sessions: {
+          select: {
+            id: true,
+            status: true,
+            lastActivityAt: true,
+            messagesSent: true,
+            messagesReceived: true,
+            messagesFailed: true,
+            llmCost: true,
+          },
+        },
+      },
+    });
+
+    res.json({
+      automations: automations.map((automation) => {
+        const sessions = automation.sessions || [];
+        const stats = sessions.reduce(
+          (acc, s) => {
+            acc.messagesSent += s.messagesSent || 0;
+            acc.messagesReceived += s.messagesReceived || 0;
+            acc.messagesFailed += s.messagesFailed || 0;
+            acc.totalLlmCost += Number(s.llmCost || 0);
+            if (s.status === 'human_handoff') acc.pendingHandoffs += 1;
+            if (s.lastActivityAt) {
+              const actTime = new Date(s.lastActivityAt).getTime();
+              if (!acc.lastActivityAt || actTime > acc.lastActivityAt) {
+                acc.lastActivityAt = actTime;
+              }
+            }
+            return acc;
+          },
+          {
+            totalConversations: automation._count?.sessions ?? sessions.length,
+            leadsCount: automation._count?.contacts ?? 0,
+            pendingHandoffs: 0,
+            messagesSent: 0,
+            messagesReceived: 0,
+            messagesFailed: 0,
+            totalLlmCost: 0,
+            lastActivityAt: null,
+          }
+        );
+        stats.totalLlmCost = Number(stats.totalLlmCost.toFixed(4));
+
+        const { sessions: _discard, ...rest } = automation;
+        return {
+          ...rest,
+          stats,
+          connections: rest.connections.map(scrub),
+        };
+      }),
+    });
   } catch (error) {
     console.error('[WhatsAppAutomation] list error:', error);
     res.status(500).json({ error: 'Failed to load WhatsApp automations' });
@@ -294,7 +357,14 @@ router.get('/:automationId', async (req, res) => {
       include: { connections: true, tools: true, autoReplies: true, products: true, faqs: true, businessHours: true, knowledgeSources: true },
     });
     if (!automation) return res.status(404).json({ error: 'Automation not found' });
-    res.json({ automation: { ...automation, connections: automation.connections.map(scrub) } });
+    const connections = (automation.connections || []).map((c) => {
+      try {
+        return decryptConnectionSecrets(c);
+      } catch (err) {
+        return scrub(c);
+      }
+    });
+    res.json({ automation: { ...automation, connections } });
   } catch (error) {
     console.error('[WhatsAppAutomation] get error:', error);
     res.status(500).json({ error: 'Failed to load WhatsApp automation' });
@@ -407,7 +477,7 @@ router.post('/:automationId/connections', requireAdmin, async (req, res) => {
     if (existing) {
       return res.status(409).json({
         error: 'This phone number is already connected to this automation.',
-        connection: scrub(existing),
+        connection: decryptConnectionSecrets(existing),
       });
     }
 
@@ -430,7 +500,7 @@ router.post('/:automationId/connections', requireAdmin, async (req, res) => {
       await dbService.prisma.whatsAppConnection.delete({ where: { id: connection.id } });
       return res.status(400).json({ error: error.message });
     }
-    res.status(201).json({ connection: scrub(connection) });
+    res.status(201).json({ connection: decryptConnectionSecrets(connection) });
   } catch (error) {
     if (error.code === 'P2002') {
       return res.status(409).json({ error: 'This phone number is already connected to this automation.' });
