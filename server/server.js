@@ -6,7 +6,6 @@ const cors = require('cors');
 const cookieParser = require('cookie-parser');
 const { setupConnectionHandler } = require('./src/socket/connectionHandler');
 const { setupTelnyxConnectionHandler } = require('./src/socket/telnyxConnectionHandler');
-const { setupBaileysSocketHandler } = require('./src/socket/baileysSocket');
 const { routes: whatsappAutomationRouter, WhatsAppAutomationInboundRouter, initializeWhatsAppAutomationProviders } = require('./src/whatsappAutomation');
 const { RateLimiter } = require('./src/whatsappAutomation/concurrency');
 const app = express();
@@ -73,8 +72,11 @@ app.use('/api/auth', authRouter);
 
 app.use('/api/whatsapp-automation', whatsappAutomationRouter);
 
-const baileysRouter = require('./src/routes/baileys');
-app.use('/api/baileys', baileysRouter);
+// Legacy stub to prevent frontend errors after Baileys removal (Meta Cloud API only)
+app.use('/api/baileys', (req, res) => {
+  if (req.path === '/instances' || req.path === '/instances/') return res.json([]);
+  return res.json({ success: true, instances: [] });
+});
 
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', service: 'realtime-voice-service' });
@@ -118,7 +120,7 @@ wss.on('connection', (ws, req) => {
     const to = queryParams.get('to');
     setupTelnyxConnectionHandler(ws, req, to);
   } else if (pathname === '/baileys') {
-    setupBaileysSocketHandler(ws, req);
+    ws.close(1000, 'Baileys is disabled. Meta Cloud API is the active provider.');
   } else {
     setupConnectionHandler(ws, req);
   }

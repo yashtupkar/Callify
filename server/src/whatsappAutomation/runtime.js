@@ -12,6 +12,7 @@ const { dbService } = require('../services/DatabaseService');
 const { KeyedMutex, mapLimit, TtlDedup, RateLimiter } = require('./concurrency');
 
 const inbox = require('./inbox');
+const { processInboundMedia } = require('./mediaProcessor');
 
 const sessionMutex = new KeyedMutex();
 const processedMessages = new TtlDedup({ ttlMs: 10 * 60 * 1000 });
@@ -43,6 +44,9 @@ function getMessageText(value) {
 
 function getIncomingLogMessage(message) {
   if (!message) return '';
+  if (message.processedMedia?.logText) {
+    return message.processedMedia.logText;
+  }
   if (message.type === 'interactive_response') {
     return getMessageText(message.title || message.text || message.body || message.value || message.id || message);
   }
@@ -267,6 +271,26 @@ async function handleMessages({ automation, connection, provider, messages, repl
 
     try {
       for (const [index, message] of contactMessages.entries()) {
+      // Process rich media (Audio STT voice notes, Image vision AI, PDF/Document text extraction)
+      if (['audio', 'image', 'document', 'video'].includes(message.type)) {
+        try {
+          const mediaResult = await processInboundMedia({
+            provider,
+            message,
+            automation,
+          });
+          if (mediaResult) {
+            message.processedMedia = mediaResult;
+            message.userUtterance = mediaResult.userUtterance;
+            if (message.type === 'audio' && mediaResult.metadata?.success) {
+              message.text = mediaResult.userUtterance;
+            }
+          }
+        } catch (mediaErr) {
+          console.error(`[WhatsAppAutomation] Failed to process ${message.type} media:`, mediaErr.message);
+        }
+      }
+
       const rawText = String(message.text || '').trim().toLowerCase();
 
       // Handle STOP command
@@ -371,10 +395,11 @@ async function handleMessages({ automation, connection, provider, messages, repl
         ].filter(Boolean).join('\n');
         await entry.conversationManager.handleUserUtterance(locText);
       } else if (['image', 'video', 'audio', 'document'].includes(message.type)) {
-        const caption = message.media?.caption || '';
-        const userText = caption
-          ? `[User sent a ${message.type} with caption: "${caption}"]`
-          : `[User sent a ${message.type}]`;
+        const userText = message.userUtterance || (
+          message.media?.caption
+            ? `[User sent a ${message.type} with caption: "${message.media.caption}"]`
+            : `[User sent a ${message.type}]`
+        );
         await entry.conversationManager.handleUserUtterance(userText);
       } else if (message.type === 'flow_reply') {
         const text = `[Customer completed WhatsApp Flow: ${message.name || 'flow'}]`;

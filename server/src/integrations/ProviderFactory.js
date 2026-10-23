@@ -138,7 +138,7 @@ function createSTT(providerConfig, language = 'en-US') {
 
 function createWhatsApp(providerConfig) {
   const providerKey = (providerConfig?.provider || '').toLowerCase();
-  if (providerKey === 'cloud_api' || providerKey === 'meta_cloud' || providerKey === 'meta') {
+  if (providerKey === 'cloud_api' || providerKey === 'meta_cloud' || providerKey === 'meta' || !providerKey) {
     return new CloudApiProvider({
       phoneNumberId: providerConfig.phoneNumberId,
       businessId: providerConfig.businessId,
@@ -147,15 +147,7 @@ function createWhatsApp(providerConfig) {
       appSecret: providerConfig.appSecret,
     });
   }
-  if (providerKey === 'baileys') {
-    // Lazy-require to avoid circular dependency (BaileysInstanceManager -> ConversationManager -> ProviderFactory)
-    const { baileysInstanceManager } = require('../services/BaileysInstanceManager');
-    const instanceId = providerConfig.instanceId;
-    const existing = baileysInstanceManager.getInstance(instanceId);
-    if (existing) return existing;
-    return baileysInstanceManager.createInstance(instanceId);
-  }
-  throw new Error(`[ProviderFactory] Unknown WhatsApp provider: "${providerKey}"`);
+  throw new Error(`[ProviderFactory] Unknown or unsupported WhatsApp provider: "${providerKey}". Only Meta Cloud API is supported.`);
 }
 
 module.exports = {

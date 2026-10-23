@@ -392,7 +392,7 @@ router.post('/:automationId/connections', requireAdmin, async (req, res) => {
     const body = req.body || {};
     const phoneNumber = String(body.phoneNumber || '').trim();
     if (!body.provider || !phoneNumber) return res.status(400).json({ error: 'provider and phoneNumber are required' });
-    if (!['baileys', 'cloud_api', 'meta_cloud', 'meta'].includes(body.provider)) return res.status(400).json({ error: 'Unsupported provider' });
+    if (!['cloud_api', 'meta_cloud', 'meta'].includes(body.provider)) return res.status(400).json({ error: 'Unsupported provider. Only Meta Cloud API is supported.' });
     const workspaceId = await resolveWorkspaceId(req);
     const automation = await dbService.prisma.whatsAppAutomation.findFirst({ where: { id: req.params.automationId, workspaceId } });
     if (!automation) return res.status(404).json({ error: 'Automation not found' });
@@ -462,8 +462,8 @@ router.put('/:automationId/connections/:connectionId', requireAdmin, async (req,
         .map((field) => [field, body[field]])
     ));
 
-    if (data.provider && !['baileys', 'cloud_api', 'meta_cloud', 'meta'].includes(data.provider)) {
-      return res.status(400).json({ error: 'Unsupported provider' });
+    if (data.provider && !['cloud_api', 'meta_cloud', 'meta'].includes(data.provider)) {
+      return res.status(400).json({ error: 'Unsupported provider. Only Meta Cloud API is supported.' });
     }
     if (data.phoneNumber !== undefined) {
       data.phoneNumber = String(data.phoneNumber).trim();

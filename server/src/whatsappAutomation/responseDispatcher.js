@@ -107,10 +107,8 @@ async function sendWhatsAppResponse({ provider, recipient, response, context = {
 
   // Step 4: Route based on Provider type
   let result;
-  if (providerName === 'CloudApiProvider') {
+  if (providerName === 'CloudApiProvider' || typeof provider.sendTemplate === 'function') {
     result = await sendMetaCloudResponse({ provider, recipient, response: normalized, context });
-  } else if (providerName === 'BaileysProvider') {
-    result = await sendBaileysResponse({ provider, recipient, response: normalized, context });
   } else {
     // Generic WhatsAppProvider fallback
     result = await sendGenericResponse({ provider, recipient, response: normalized, context });
@@ -275,98 +273,6 @@ async function sendMetaCloudResponse({ provider, recipient, response, context })
   }
 }
 
-/**
- * Sends a message via Baileys (WhatsApp Web API).
- */
-async function sendBaileysResponse({ provider, recipient, response, context }) {
-  try {
-    const to = recipient;
-
-    switch (response._type) {
-      case 'text':
-        await provider.sendText(to, response.text);
-        break;
-
-      case 'button':
-        if (typeof provider.sendPoll === 'function' && Array.isArray(response.buttons) && response.buttons.length > 0) {
-          const bodyText = (response.body || response.text || '').trim();
-          const options = response.buttons.map((b) => b.title);
-          // WhatsApp polls have a character limit on the question title (255 chars).
-          // If the reply text is longer, send the full welcome text first, then the poll as the selector!
-          if (bodyText.length > 255) {
-            await provider.sendText(to, bodyText);
-            await provider.sendPoll(to, 'Choose an option:', options);
-          } else {
-            await provider.sendPoll(to, bodyText || 'Choose an option:', options);
-          }
-        } else {
-          // Format as numbered text list
-          const formatted = extractPlainText(response);
-          await provider.sendText(to, formatted);
-        }
-        break;
-
-      case 'list': {
-        const formatted = extractPlainText(response);
-        await provider.sendText(to, formatted);
-        break;
-      }
-
-      case 'cta_url': {
-        const formatted = extractPlainText(response);
-        await provider.sendText(to, formatted);
-        break;
-      }
-
-      case 'media':
-        if (response.url) {
-          if (response.mediaType === 'image') {
-            await provider.sendImage(to, response.url, response.caption);
-          } else if (response.mediaType === 'document') {
-            await provider.sendDocument(to, response.url, response.filename);
-          } else {
-            await provider.sendImage(to, response.url, response.caption);
-          }
-        } else {
-          await provider.sendText(to, extractPlainText(response));
-        }
-        break;
-
-      case 'location': {
-        const formatted = extractPlainText(response);
-        await provider.sendText(to, formatted);
-        break;
-      }
-
-      default: {
-        const text = extractPlainText(response);
-        if (text) await provider.sendText(to, text);
-        break;
-      }
-    }
-
-    console.log('[ResponseDispatcher] Baileys message sent successfully:', {
-      provider: 'baileys',
-      recipient: maskPhoneNumber(recipient),
-      responseType: response._type,
-      success: true,
-    });
-
-    return {
-      success: true,
-      type: response._type,
-      response,
-    };
-  } catch (err) {
-    console.error('[ResponseDispatcher] Baileys send error:', err.message);
-    return {
-      success: false,
-      type: response._type,
-      error: err.message,
-      response,
-    };
-  }
-}
 
 /**
  * Generic fallback for any other WhatsAppProvider subclass.
