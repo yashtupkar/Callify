@@ -200,6 +200,22 @@ function normalizeWhatsAppResponse(input) {
     if (typeof obj.message === 'string' && obj.message.trim()) {
       return { _type: 'text', text: formatWhatsAppMarkdown(obj.message.trim()) };
     }
+    if (typeof obj.content === 'string' && obj.content.trim()) {
+      return { _type: 'text', text: formatWhatsAppMarkdown(obj.content.trim()) };
+    }
+    if (typeof obj.response === 'string' && obj.response.trim()) {
+      return { _type: 'text', text: formatWhatsAppMarkdown(obj.response.trim()) };
+    }
+    if (typeof obj.reply === 'string' && obj.reply.trim()) {
+      return { _type: 'text', text: formatWhatsAppMarkdown(obj.reply.trim()) };
+    }
+    if (typeof obj.summary === 'string' && obj.summary.trim()) {
+      return { _type: 'text', text: formatWhatsAppMarkdown(obj.summary.trim()) };
+    }
+    const stringValues = Object.values(obj).filter((val) => typeof val === 'string' && val.trim().length > 0);
+    if (stringValues.length > 0) {
+      return { _type: 'text', text: formatWhatsAppMarkdown(stringValues.join('\n\n')) };
+    }
     return {
       _type: 'text',
       text: "I'm sorry, I couldn't process that request. How else can I help?",

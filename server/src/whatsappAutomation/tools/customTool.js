@@ -56,12 +56,52 @@ function buildCustomTool(rawConfig) {
     description: 'Set to true if the customer has an older open request and explicitly confirmed they want to book again or create a fresh request.'
   };
 
+  let toolDesc = config.description || `Record a "${config.title}" request for the business team.`;
+  if (config.name.includes('complaint') || config.title.toLowerCase().includes('complaint')) {
+    toolDesc = 'Log an issue, malfunction, defect, or complaint from an existing customer. DO NOT use this tool for new installations, bookings, site surveys, or quotations.';
+  } else if (config.name.includes('survey') || config.name.includes('book') || config.title.toLowerCase().includes('survey') || config.title.toLowerCase().includes('book')) {
+    toolDesc = 'Schedule a site survey, inspection, or residential/commercial solar installation visit. Collect Name, Address, Phone, and preferred Date & Time. DO NOT use this tool for complaints.';
+  }
+
   return {
     name: config.name,
     category: 'custom',
-    description: (config.description || `Record a "${config.title}" request for the business team.`) + '\n\nIMPORTANT: Before calling this tool, you MUST explicitly ask the user to provide any missing information. DO NOT guess, assume, or reuse example values for any arguments (like name, phone, or address) unless the customer explicitly provided them in this conversation. Once all details are gathered, present a summary and wait for their explicit confirmation before calling this tool.',
+    description: toolDesc + '\n\nIMPORTANT: Before calling this tool, you MUST explicitly ask the user to provide any missing information. DO NOT guess, assume, or reuse example values for any arguments (like name, phone, or address) unless the customer explicitly provided them in this conversation. Once all details are gathered, present a summary and wait for their explicit confirmation before calling this tool.',
     parameters: { type: 'object', properties, required, additionalProperties: false },
     handler: async (args, ctx) => {
+      // 0. Semantic intent guard: ensure tool matches the nature of the request
+      const isComplaintTool = config.name.includes('complaint') || config.title.toLowerCase().includes('complaint');
+      const isBookingOrSurveyTool = config.name.includes('survey') || config.name.includes('book') || config.title.toLowerCase().includes('survey') || config.title.toLowerCase().includes('book');
+
+      const allValues = Object.values(args || {}).map(v => String(v || '').toLowerCase()).join(' ');
+
+      if (isComplaintTool) {
+        const installKeywords = ['installation', 'install', 'site survey', 'survey', 'quotation', 'quote', 'new system', 'want to buy', 'interested in solar', 'solar setup'];
+        const complaintKeywords = ['not working', 'broken', 'damage', 'fault', 'delay', 'leak', 'defective', 'inverter error', 'failure', 'dissatisfied', 'bad service'];
+        const hasInstallIntent = installKeywords.some(k => allValues.includes(k));
+        const hasComplaintIntent = complaintKeywords.some(k => allValues.includes(k));
+
+        if (hasInstallIntent && !hasComplaintIntent) {
+          return {
+            success: false,
+            error: 'WRONG_TOOL_FOR_TASK',
+            message: 'Error: "register_complaint" cannot be used for new installations, site surveys, or bookings. You MUST use "book_site_survey" instead. Ask the customer for their preferred date and time for the site survey if not already provided, summarize as a site survey booking, and call "book_site_survey".'
+          };
+        }
+      }
+
+      if (isBookingOrSurveyTool) {
+        const complaintKeywords = ['not working', 'broken', 'damage', 'leakage', 'faulty', 'defect'];
+        const hasComplaintOnly = complaintKeywords.some(k => allValues.includes(k));
+        if (hasComplaintOnly) {
+          return {
+            success: false,
+            error: 'WRONG_TOOL_FOR_TASK',
+            message: 'Error: This tool is for scheduling site visits or surveys. For customer complaints or malfunctioning systems, use "register_complaint".'
+          };
+        }
+      }
+
       // 1. Check for missing or empty arguments for all fields
       const missingFields = [];
       for (const field of config.fields) {

@@ -141,6 +141,7 @@ class WhatsAppToolExecutor {
         'MISSING_REQUIRED_FIELDS',
         'EXISTING_OPEN_RECORD',
         'EXISTING_OLD_RECORD',
+        'WRONG_TOOL_FOR_TASK',
       ];
       if (confirmationOrFieldErrors.includes(res.error)) {
         return true;

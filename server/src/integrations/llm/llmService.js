@@ -82,8 +82,12 @@ class LLMService extends LLMProvider {
       if (tools && tools.length > 0) {
         options.tools       = tools;
         options.tool_choice = toolChoice; // 'auto', 'required', or 'none'
-        // Request JSON output format for structured responses (WhatsApp only)
-        if (this.enableJsonMode) {
+      }
+
+      // Request JSON output format for structured responses (WhatsApp only when prompt instructs JSON)
+      if (this.enableJsonMode) {
+        const hasJsonMention = messages.some(m => String(m.content || '').toLowerCase().includes('json'));
+        if (hasJsonMention) {
           options.response_format = { type: "json_object" };
         }
       }

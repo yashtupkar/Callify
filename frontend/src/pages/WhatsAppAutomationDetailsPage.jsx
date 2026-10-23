@@ -1,6 +1,31 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { Plus, Trash2, Link2, Pencil, Save, X, Check, KeyRound, Phone, Terminal, ArrowLeft, Pause, Play, Settings2, Bot, Users } from "lucide-react";
+import axios from "axios";
+import { SERVER_URL } from "@/lib/constants";
+import {
+  Plus,
+  Trash2,
+  Link2,
+  Pencil,
+  Save,
+  X,
+  Check,
+  KeyRound,
+  Phone,
+  Terminal,
+  ArrowLeft,
+  Pause,
+  Play,
+  Settings2,
+  Bot,
+  Users,
+  Sparkles,
+  RefreshCw,
+  DollarSign,
+  Cpu,
+  MessageSquare,
+  Wrench,
+} from "lucide-react";
 import {
   WEBHOOK_URL,
   toolOptions,
@@ -259,6 +284,150 @@ function DetailView({
   );
 }
 
+function AutomationLlmUsageOverview({ automationId }) {
+  const [stats, setStats] = useState(null);
+  const [sessionCount, setSessionCount] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  const loadUsage = async () => {
+    if (!automationId) return;
+    setLoading(true);
+    setError("");
+    try {
+      const { data } = await axios.get(
+        `${SERVER_URL}/api/whatsapp-automation/${automationId}/stats/messages`,
+        { withCredentials: true }
+      );
+      if (data?.stats) {
+        setStats(data.stats);
+        setSessionCount(data.sessionCount || 0);
+      }
+    } catch (err) {
+      setError(err.response?.data?.error || err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadUsage();
+    const interval = setInterval(loadUsage, 15000);
+    return () => clearInterval(interval);
+  }, [automationId]);
+
+  const cost = stats ? Number(stats.llmCost || 0) : 0;
+  const promptTokens = stats ? Number(stats.llmPromptTokens || 0) : 0;
+  const completionTokens = stats ? Number(stats.llmCompletionTokens || 0) : 0;
+  const totalTokens = stats ? Number(stats.totalTokens || (promptTokens + completionTokens)) : 0;
+  const llmCalls = stats ? Number(stats.llmCalls || 0) : 0;
+  const toolCalls = stats ? Number(stats.toolCalls || 0) : 0;
+  const received = stats ? Number(stats.received || 0) : 0;
+  const sent = stats ? Number(stats.sent || 0) : 0;
+
+  return (
+    <div className="mb-5 overflow-hidden rounded-xl border border-violet-500/30 bg-gradient-to-br from-[#12111d] via-[#101015] to-[#0c0c0f] p-5 shadow-lg shadow-black/40">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#26262b]/80 pb-4">
+        <div className="flex items-center gap-2.5">
+          <div className="grid h-8 w-8 place-items-center rounded-lg border border-violet-500/40 bg-violet-500/20 text-violet-300">
+            <Sparkles className="h-4 w-4" />
+          </div>
+          <div>
+            <h2 className="flex items-center gap-2 font-semibold text-zinc-100">
+              AI &amp; LLM Usage Overview
+              <span className="inline-flex items-center rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-300">
+                Live Provider Billing
+              </span>
+            </h2>
+            <p className="text-xs text-zinc-400">
+              Accumulated token consumption &amp; cost returned directly by OpenRouter / AI APIs
+            </p>
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={loadUsage}
+          disabled={loading}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-[#2b2b32] bg-[#1a1a20] px-3 py-1.5 text-xs font-medium text-zinc-300 transition hover:border-[#383842] hover:bg-[#22222a] hover:text-zinc-100 disabled:opacity-50"
+          title="Refresh LLM usage"
+        >
+          <RefreshCw className={cn("h-3.5 w-3.5 text-violet-400", loading && "animate-spin")} />
+          <span>{loading ? "Refreshing..." : "Refresh"}</span>
+        </button>
+      </div>
+
+      <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+        {/* Cost Metric */}
+        <div className="rounded-lg border border-[#26262b] bg-[#14131d]/60 p-3.5">
+          <div className="flex items-center justify-between text-xs text-zinc-400">
+            <span>Total LLM Cost</span>
+            <DollarSign className="h-3.5 w-3.5 text-emerald-400" />
+          </div>
+          <div className="mt-1.5 flex items-baseline gap-1">
+            <span className="text-xl font-bold tracking-tight text-emerald-300">
+              ${cost.toFixed(6)}
+            </span>
+          </div>
+          <p className="mt-1 truncate text-[11px] text-zinc-500">
+            Accumulated provider cost
+          </p>
+        </div>
+
+        {/* Tokens Metric */}
+        <div className="rounded-lg border border-[#26262b] bg-[#14131d]/60 p-3.5">
+          <div className="flex items-center justify-between text-xs text-zinc-400">
+            <span>Tokens Consumed</span>
+            <Cpu className="h-3.5 w-3.5 text-violet-400" />
+          </div>
+          <div className="mt-1.5 flex items-baseline gap-1">
+            <span className="text-xl font-bold tracking-tight text-zinc-100">
+              {totalTokens.toLocaleString()}
+            </span>
+            <span className="text-xs text-zinc-500">tok</span>
+          </div>
+          <p className="mt-1 truncate text-[11px] text-zinc-500">
+            {promptTokens.toLocaleString()} prompt · {completionTokens.toLocaleString()} comp
+          </p>
+        </div>
+
+        {/* LLM & Tool Calls */}
+        <div className="rounded-lg border border-[#26262b] bg-[#14131d]/60 p-3.5">
+          <div className="flex items-center justify-between text-xs text-zinc-400">
+            <span>AI &amp; Tool Calls</span>
+            <Wrench className="h-3.5 w-3.5 text-sky-400" />
+          </div>
+          <div className="mt-1.5 flex items-baseline gap-1">
+            <span className="text-xl font-bold tracking-tight text-sky-300">
+              {llmCalls.toLocaleString()}
+            </span>
+            <span className="text-xs text-zinc-500">reqs</span>
+          </div>
+          <p className="mt-1 truncate text-[11px] text-zinc-500">
+            {toolCalls.toLocaleString()} tool execution(s)
+          </p>
+        </div>
+
+        {/* Conversations & Messages */}
+        <div className="rounded-lg border border-[#26262b] bg-[#14131d]/60 p-3.5">
+          <div className="flex items-center justify-between text-xs text-zinc-400">
+            <span>Conversations</span>
+            <MessageSquare className="h-3.5 w-3.5 text-amber-400" />
+          </div>
+          <div className="mt-1.5 flex items-baseline gap-1">
+            <span className="text-xl font-bold tracking-tight text-zinc-100">
+              {sessionCount}
+            </span>
+            <span className="text-xs text-zinc-500">session(s)</span>
+          </div>
+          <p className="mt-1 truncate text-[11px] text-zinc-500">
+            {received.toLocaleString()} in · {sent.toLocaleString()} out
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function OverviewTab({ automation: a, rules, setTab, navigate }) {
   const connections = a.connections || [];
   const tools = toolsOf(a);
@@ -284,7 +453,9 @@ function OverviewTab({ automation: a, rules, setTab, navigate }) {
     ["Automation is active", a.status === "active", null, null],
   ];
   return (
-    <div className="grid gap-4 lg:grid-cols-[1.3fr_1fr]">
+    <>
+      <AutomationLlmUsageOverview automationId={a.id} />
+      <div className="grid gap-4 lg:grid-cols-[1.3fr_1fr]">
       <div>
         <Card title="Readiness">
           <ul className="space-y-2">
@@ -407,6 +578,7 @@ function OverviewTab({ automation: a, rules, setTab, navigate }) {
         </div>
       </div>
     </div>
+    </>
   );
 }
 
