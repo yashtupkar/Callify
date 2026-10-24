@@ -3411,6 +3411,8 @@ import { SERVER_URL } from "@/lib/constants";
 import { useAuth } from "@/hooks/useAuth";
 import { toolOptions } from "@/components/whatsapp/automationKit";
 import CustomToolsEditor from "@/components/whatsapp/CustomToolsEditor";
+import VisualFlowBuilder from "@/components/whatsapp/VisualFlowBuilder";
+import AiFlowGeneratorModal from "@/components/whatsapp/AiFlowGeneratorModal";
 
 /* ────────────────────────────────────────────────────────────────────────────
    WhatsApp automation setup — Tailwind CSS only.
@@ -4058,9 +4060,9 @@ function validateRules(c) {
     ) {
       if (blank(rule.triggerValue))
         e[`${p}.triggerValue`] = "Enter the button / row ID.";
-      else if (!/^[\w-]{1,200}$/.test(rule.triggerValue.trim()))
+      else if (!/^[\w-,\s]{1,500}$/.test(rule.triggerValue.trim()))
         e[`${p}.triggerValue`] =
-          "Use letters, numbers, dashes and underscores only.";
+          "Use letters, numbers, dashes, underscores, and commas only.";
     } else if (
       rule.triggerType === "first_message" &&
       rule.enabled &&
@@ -4180,8 +4182,13 @@ function matchesRule(rule, lower, id, isFirst) {
   const value = (rule.triggerValue || "").trim();
   if (rule.triggerType === "first_message") return isFirst;
   if (rule.triggerType === "always") return true;
-  if (rule.triggerType === "button_press" || rule.triggerType === "list_row")
-    return !!id && id === value;
+  if (rule.triggerType === "button_press" || rule.triggerType === "list_row") {
+    if (!id) return false;
+    const ids = value.includes(",")
+      ? value.split(",").map((s) => s.trim())
+      : [value];
+    return ids.includes(id);
+  }
   if (id || !value) return false;
   const v = value.toLowerCase();
   if (rule.matchMode === "exact") return lower === v;
@@ -6095,6 +6102,18 @@ function RulesStep({
   const [collapsed, setCollapsed] = useState(() =>
     config.rules.length > 1 ? config.rules.map((_, i) => i) : [],
   );
+  const [viewMode, setViewMode] = useState("visual");
+  const [aiModalOpen, setAiModalOpen] = useState(false);
+
+  const handleApplyGeneratedRules = (generatedRules, mode) => {
+    if (mode === "replace") {
+      update("rules", generatedRules);
+    } else {
+      update("rules", [...config.rules, ...generatedRules]);
+    }
+    setViewMode("visual");
+  };
+
   const toggleCollapsed = (i) =>
     setCollapsed((c) => (c.includes(i) ? c.filter((x) => x !== i) : [...c, i]));
 
@@ -6197,6 +6216,28 @@ function RulesStep({
   const activeCount = config.rules.filter((r) => r.enabled).length;
   const used = new Set(config.rules.map((r) => r.name));
 
+  if (viewMode === "visual") {
+    return (
+      <>
+        <VisualFlowBuilder
+          config={config}
+          update={update}
+          updateRule={updateRule}
+          updateRuleResponse={updateRuleResponse}
+          testRule={testRule}
+          onOpenAiModal={() => setAiModalOpen(true)}
+          onSwitchToList={() => setViewMode("list")}
+        />
+        <AiFlowGeneratorModal
+          isOpen={aiModalOpen}
+          onClose={() => setAiModalOpen(false)}
+          config={config}
+          onApplyRules={handleApplyGeneratedRules}
+        />
+      </>
+    );
+  }
+
   return (
     <Card
       title="Auto-replies"
@@ -6207,6 +6248,28 @@ function RulesStep({
         </Chip>
       }
     >
+      {/* View Switcher & AI Generator Bar */}
+      <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[#26262b] bg-[#121217] p-3">
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setViewMode("visual")}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/50 bg-emerald-500/10 px-3 py-1.5 text-xs font-semibold text-emerald-300 hover:bg-emerald-500/20 transition"
+          >
+            <Icon name="bolt" className="h-3.5 w-3.5" />
+            Switch to Visual Flowchart
+          </button>
+        </div>
+        <button
+          type="button"
+          onClick={() => setAiModalOpen(true)}
+          className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3.5 py-1.5 text-xs font-semibold text-white shadow-md hover:bg-emerald-500 transition"
+        >
+          <Icon name="sparkle" className="h-3.5 w-3.5" />
+          Generate Flow with AI
+        </button>
+      </div>
+
       {/* pipeline */}
       <div className="mb-5 flex flex-wrap items-center gap-2 text-xs">
         {[
@@ -6572,6 +6635,12 @@ function RulesStep({
           </span>
         )}
       </div>
+      <AiFlowGeneratorModal
+        isOpen={aiModalOpen}
+        onClose={() => setAiModalOpen(false)}
+        config={config}
+        onApplyRules={handleApplyGeneratedRules}
+      />
     </Card>
   );
 }

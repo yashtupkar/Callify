@@ -6,6 +6,7 @@ const { store } = require('./sessionStore');
 const { encryptConnectionSecrets, decryptConnectionSecrets } = require('./secretBox');
 const { createCrmRouter } = require('./tools/crmRoutes');
 const { BUILT_IN_TOOLS } = require('./tools');
+const { generateFlowWithAI } = require('./flowGenerator');
 
 const router = express.Router();
 router.use(authMiddleware);
@@ -632,6 +633,56 @@ router.get('/:automationId/logs/recent', requireAdmin, async (req, res) => {
   } catch (error) {
     console.error('[WhatsAppAutomation] recent logs error:', error);
     res.status(500).json({ error: 'Failed to get recent logs' });
+  }
+});
+
+// ============================================
+// AI FLOW GENERATOR API
+// ============================================
+
+router.post('/generate-flow', requireAdmin, async (req, res) => {
+  try {
+    const body = req.body || {};
+    const rules = await generateFlowWithAI(body, body.prompt);
+    res.json({ rules });
+  } catch (error) {
+    console.error('[WhatsAppAutomation] generate-flow error:', error);
+    res.status(500).json({ error: error.message || 'Failed to generate flow' });
+  }
+});
+
+router.post('/:automationId/generate-flow', requireAdmin, async (req, res) => {
+  try {
+    const workspaceId = await resolveWorkspaceId(req);
+    const automation = await dbService.prisma.whatsAppAutomation.findFirst({
+      where: { id: req.params.automationId, workspaceId },
+      include: {
+        products: true,
+        faqs: true,
+      },
+    });
+
+    const body = req.body || {};
+    const onboarding = automation?.promptConfig?.onboarding?.businessProfile || {};
+    const saved = automation?.promptConfig?.setup || {};
+
+    const profile = {
+      businessName: body.businessName || onboarding.businessName || automation?.name,
+      industry: body.industry || onboarding.industry || saved.industry,
+      description: body.description || onboarding.description || automation?.description,
+      products: Array.isArray(body.products) && body.products.length ? body.products : (automation?.products || saved.products || []),
+      faqs: Array.isArray(body.faqs) && body.faqs.length ? body.faqs : (automation?.faqs || saved.faqs || []),
+      language: body.language || automation?.language || 'en-US',
+      websiteUrl: body.websiteUrl || onboarding.websiteUrl || saved.websiteUrl,
+      address: body.address || onboarding.address || saved.address,
+      businessPhone: body.businessPhone || onboarding.businessPhone || saved.businessPhone,
+    };
+
+    const rules = await generateFlowWithAI(profile, body.prompt);
+    res.json({ rules });
+  } catch (error) {
+    console.error('[WhatsAppAutomation] automation generate-flow error:', error);
+    res.status(500).json({ error: error.message || 'Failed to generate flow' });
   }
 });
 
