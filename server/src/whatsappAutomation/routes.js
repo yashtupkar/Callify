@@ -277,7 +277,7 @@ router.post('/', requireAdmin, async (req, res) => {
       if (tools.length) await tx.whatsAppAutomationTool.createMany({ data: tools.map((tool) => ({ ...tool, automationId: created.id })) });
       await syncSetupRecords(tx, created.id, setup);
       return tx.whatsAppAutomation.findUnique({ where: { id: created.id }, include: { tools: true, autoReplies: true } });
-    });
+    }, { maxWait: 10000, timeout: 30000 });
     res.status(201).json({ automation });
   } catch (error) {
     console.error('[WhatsAppAutomation] create error:', error);
@@ -440,7 +440,7 @@ router.put('/:automationId', requireAdmin, async (req, res) => {
       if (tools.length) await tx.whatsAppAutomationTool.createMany({ data: tools.map((tool) => ({ ...tool, automationId: req.params.automationId })) });
       await syncSetupRecords(tx, req.params.automationId, setup);
       return tx.whatsAppAutomation.findUnique({ where: { id: req.params.automationId }, include: { tools: true, autoReplies: true } });
-    });
+    }, { maxWait: 10000, timeout: 30000 });
     if (!automation) return res.status(404).json({ error: 'Automation not found' });
     store.clearAutomation(req.params.automationId);
     res.json({ ok: true, automation });
